@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sizer/sizer.dart';
+import 'package:universal_io/io.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../core/app_export.dart';
 import './widgets/pdf_annotation_toolbar.dart';
@@ -17,19 +20,11 @@ class PdfReader extends StatefulWidget {
   State<PdfReader> createState() => _PdfReaderState();
 }
 
-class _PdfReaderState extends State<PdfReader>
-    with TickerProviderStateMixin {
-  // Animation controllers
-  late AnimationController _fadeController;
-  late AnimationController _zoomController;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _zoomAnimation;
-  
+class _PdfReaderState extends State<PdfReader> {
   // PDF state
   int _currentPage = 1;
-  final int _totalPages = 247;
+  int _totalPages = 0;
   double _zoomLevel = 1.0;
-  bool _isFullScreen = false;
   bool _isTextReflowMode = false;
   String _selectedText = '';
   
@@ -55,83 +50,29 @@ class _PdfReaderState extends State<PdfReader>
   double _ttsProgress = 0.0;
   String _currentSentence = '';
   double _ttsPlaybackSpeed = 1.0;
+
+  DocumentModel? _document;
+  final PdfViewerController _pdfViewerController = PdfViewerController();
   
   // Bookmarks and notes
-  final List<Map<String, dynamic>> _bookmarks = [
-{ 'id': 1,
-'title': 'Introduction to Machine Learning',
-'note': 'Key concepts and definitions',
-'page': 15,
-'icon': Icons.star.codePoint,
-'color': AppTheme.accentColor.value,
-'createdAt': '2025-08-05T10:30:00.000Z',
-},
-{ 'id': 2,
-'title': 'Neural Network Architecture',
-'note': 'Important diagram showing layer structure',
-'page': 42,
-'icon': Icons.lightbulb.codePoint,
-'color': AppTheme.warningColor.value,
-'createdAt': '2025-08-05T14:15:00.000Z',
-},
-{ 'id': 3,
-'title': 'Training Algorithms',
-'note': 'Backpropagation explanation',
-'page': 78,
-'icon': Icons.flag.codePoint,
-'color': AppTheme.successColor.value,
-'createdAt': '2025-08-05T16:45:00.000Z',
-},
-];
+  final List<Map<String, dynamic>> _bookmarks = [];
   
   final List<Map<String, dynamic>> _quickNotes = [];
-  
-  // Mock PDF document data
-  final Map<String, dynamic> _documentData = {
-    'title': 'Deep Learning Fundamentals',
-    'author': 'Dr. Sarah Chen',
-    'pages': 247,
-    'fileSize': '12.4 MB',
-    'lastOpened': '2025-08-05T20:33:46.059496',
-    'readingProgress': 0.32,
-    'totalReadingTime': '4h 23m',
-  };
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is DocumentModel) {
+      _document = args;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _initializeAnimations();
     _setupAutoHideControls();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  }
-
-  void _initializeAnimations() {
-    _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _zoomController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _fadeController,
-      curve: Curves.easeInOut,
-    ));
-    
-    _zoomAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.1,
-    ).animate(CurvedAnimation(
-      parent: _zoomController,
-      curve: Curves.easeInOut,
-    ));
-    
-    _fadeController.forward();
   }
 
   void _setupAutoHideControls() {
@@ -146,8 +87,6 @@ class _PdfReaderState extends State<PdfReader>
 
   @override
   void dispose() {
-    _fadeController.dispose();
-    _zoomController.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -173,16 +112,17 @@ class _PdfReaderState extends State<PdfReader>
   }
 
   void _handlePageNavigation(int page) {
-    setState(() {
-      _currentPage = page.clamp(1, _totalPages);
-    });
+    if (_totalPages == 0) return;
+    _pdfViewerController.jumpToPage(page);
     HapticFeedback.lightImpact();
   }
 
   void _handleZoomChange(double zoom) {
+    final newZoom = zoom.clamp(0.5, 3.0);
     setState(() {
-      _zoomLevel = zoom.clamp(0.5, 3.0);
+      _zoomLevel = newZoom;
     });
+    _pdfViewerController.zoomLevel = newZoom;
   }
 
   void _toggleAutoScroll() {
@@ -199,9 +139,9 @@ class _PdfReaderState extends State<PdfReader>
   }
 
   void _toggleTextReflow() {
-    setState(() {
-      _isTextReflowMode = !_isTextReflowMode;
-    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Text reflow is not supported for PDF files')),
+    );
     HapticFeedback.mediumImpact();
   }
 
@@ -317,32 +257,27 @@ class _PdfReaderState extends State<PdfReader>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.primaryDark,
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: Stack(
-          children: [
-            // PDF Content Area
-            GestureDetector(
-              onTap: _toggleControls,
-              onDoubleTap: () {
-                _zoomController.forward().then((_) {
-                  _zoomController.reverse();
-                });
-                _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
-              },
-              onLongPress: () {
-                final RenderBox renderBox = context.findRenderObject() as RenderBox;
-                final position = renderBox.globalToLocal(
-                  Offset(50.w, 30.h),
-                );
-                _addQuickNote(position);
-              },
-              child: Container(
-                width: double.infinity,
-                height: double.infinity,
-                child: _buildPdfContent(),
-              ),
+      body: Stack(
+        children: [
+          // PDF Content Area
+          GestureDetector(
+            onTap: _toggleControls,
+            onDoubleTap: () {
+              _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
+            },
+            onLongPress: () {
+              final RenderBox renderBox = context.findRenderObject() as RenderBox;
+              final position = renderBox.globalToLocal(
+                Offset(50.w, 30.h),
+              );
+              _addQuickNote(position);
+            },
+            child: Container(
+              width: double.infinity,
+              height: double.infinity,
+              child: _buildPdfContent(),
             ),
+          ),
             
             // Top overlay with document info
             if (_showControls)
@@ -461,11 +396,12 @@ class _PdfReaderState extends State<PdfReader>
             ),
           ],
         ),
-      ),
     );
   }
 
   Widget _buildTopOverlay() {
+    if (_document == null) return const SizedBox.shrink();
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -503,7 +439,7 @@ class _PdfReaderState extends State<PdfReader>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _documentData['title'] as String,
+                      _document!.title,
                       style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
                         color: AppTheme.textPrimary,
                         fontWeight: FontWeight.w600,
@@ -512,7 +448,7 @@ class _PdfReaderState extends State<PdfReader>
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      'by ${_documentData['author']} • ${((_documentData['readingProgress'] as double) * 100).round()}% complete',
+                      '${(_document!.readingProgress * 100).round()}% complete',
                       style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
                         color: AppTheme.textSecondary,
                       ),
@@ -543,210 +479,49 @@ class _PdfReaderState extends State<PdfReader>
   }
 
   Widget _buildPdfContent() {
-    return AnimatedBuilder(
-      animation: _zoomAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _zoomLevel * _zoomAnimation.value,
-          child: Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: BoxDecoration(
-              color: _isTextReflowMode ? AppTheme.primaryDark : Colors.white,
-            ),
-            child: _isTextReflowMode ? _buildTextReflowContent() : _buildPdfPageContent(),
-          ),
-        );
-      },
-    );
-  }
+    if (_document == null) {
+      return const Center(child: Text('No document loaded'));
+    }
 
-  Widget _buildPdfPageContent() {
-    return PageView.builder(
-      onPageChanged: (page) => _handlePageNavigation(page + 1),
-      itemCount: _totalPages,
-      itemBuilder: (context, index) {
-        return Container(
-          margin: EdgeInsets.all(2.w),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: AppTheme.cardShadow,
-          ),
-          child: Stack(
-            children: [
-              // Mock PDF page content
-              Container(
-                width: double.infinity,
-                height: double.infinity,
-                padding: EdgeInsets.all(6.w),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (index == 0) ...[
-                      Text(
-                        _documentData['title'] as String,
-                        style: AppTheme.darkTheme.textTheme.headlineLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.primaryDark,
-                        ),
-                      ),
-                      SizedBox(height: 2.h),
-                      Text(
-                        'by ${_documentData['author']}',
-                        style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w500,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                      SizedBox(height: 4.h),
-                    ],
-                    Expanded(
-                      child: GestureDetector(
-                        onLongPress: () => _handleTextSelection(
-                          'Machine learning is a subset of artificial intelligence (AI) that focuses on algorithms and statistical models that enable computer systems to improve their performance on a specific task through experience, without being explicitly programmed for that task.'
-                        ),
-                        child: Text(
-                          _getMockPageContent(index + 1),
-                          style: AppTheme.darkTheme.textTheme.bodyLarge?.copyWith(
-                            height: 1.6,
-                            color: AppTheme.primaryDark,
-                          ),
-                        ),
-                      ),
-                    ),
-                    // Page number
-                    Center(
-                      child: Text(
-                        '${index + 1}',
-                        style: AppTheme.dataTextStyle(
-                          fontSize: 12.sp,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              
-              // Search highlights overlay
-              if (_searchQuery.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  height: double.infinity,
-                  child: CustomPaint(
-                    painter: SearchHighlightPainter(
-                      query: _searchQuery,
-                      currentMatch: _currentSearchMatch,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+    if (_isTextReflowMode) {
+       return const Center(child: Text('Text reflow not supported for this document'));
+    }
 
-  Widget _buildTextReflowContent() {
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(6.w),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _documentData['title'] as String,
-            style: AppTheme.darkTheme.textTheme.headlineMedium?.copyWith(
-              color: AppTheme.textPrimary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: 2.h),
-          Text(
-            'by ${_documentData['author']}',
-            style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
-              color: AppTheme.textSecondary,
-            ),
-          ),
-          SizedBox(height: 4.h),
-          GestureDetector(
-            onLongPress: () => _handleTextSelection(
-              'Machine learning is a subset of artificial intelligence that focuses on algorithms and statistical models.'
-            ),
-            child: Text(
-              _getFullDocumentContent(),
-              style: AppTheme.darkTheme.textTheme.bodyLarge?.copyWith(
-                color: AppTheme.textPrimary,
-                height: 1.8,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    final isNetworkUrl = _document!.filePath.startsWith('http') || _document!.filePath.startsWith('https');
 
-  String _getMockPageContent(int page) {
-    final contents = [
-      'Machine learning is a subset of artificial intelligence (AI) that focuses on algorithms and statistical models that enable computer systems to improve their performance on a specific task through experience, without being explicitly programmed for that task.\n\nThe field of machine learning emerged from the quest for artificial intelligence. In the early days of AI as an academic discipline, some researchers were interested in having machines learn from data. They attempted to approach the problem with various symbolic methods, as well as what were then termed "neural networks"; these were mostly perceptrons and other models that were later found to be reinventions of the generalized linear models of statistics.',
-      'Deep learning is part of a broader family of machine learning methods based on artificial neural networks with representation learning. Learning can be supervised, semi-supervised or unsupervised.\n\nDeep learning architectures such as deep neural networks, deep belief networks, recurrent neural networks and convolutional neural networks have been applied to fields including computer vision, machine learning, natural language processing, machine translation, bioinformatics and drug design, where they have produced results comparable to and in some cases surpassing human expert performance.',
-      'Neural networks are computing systems vaguely inspired by the biological neural networks that constitute animal brains. Such systems "learn" to perform tasks by considering examples, generally without being programmed with task-specific rules.\n\nFor example, in image recognition, they might learn to identify images that contain cats by analyzing example images that have been manually labeled as "cat" or "no cat" and using the results to identify cats in other images. They do this without any prior knowledge of cats, for example, that they have fur, tails, whiskers and cat-like faces.',
-    ];
-    
-    return contents[(page - 1) % contents.length];
-  }
-
-  String _getFullDocumentContent() {
-    return '''Machine learning is a subset of artificial intelligence (AI) that focuses on algorithms and statistical models that enable computer systems to improve their performance on a specific task through experience, without being explicitly programmed for that task.
-
-The field of machine learning emerged from the quest for artificial intelligence. In the early days of AI as an academic discipline, some researchers were interested in having machines learn from data. They attempted to approach the problem with various symbolic methods, as well as what were then termed "neural networks"; these were mostly perceptrons and other models that were later found to be reinventions of the generalized linear models of statistics.
-
-Deep learning is part of a broader family of machine learning methods based on artificial neural networks with representation learning. Learning can be supervised, semi-supervised or unsupervised.
-
-Deep learning architectures such as deep neural networks, deep belief networks, recurrent neural networks and convolutional neural networks have been applied to fields including computer vision, machine learning, natural language processing, machine translation, bioinformatics and drug design, where they have produced results comparable to and in some cases surpassing human expert performance.
-
-Neural networks are computing systems vaguely inspired by the biological neural networks that constitute animal brains. Such systems "learn" to perform tasks by considering examples, generally without being programmed with task-specific rules.
-
-For example, in image recognition, they might learn to identify images that contain cats by analyzing example images that have been manually labeled as "cat" or "no cat" and using the results to identify cats in other images. They do this without any prior knowledge of cats, for example, that they have fur, tails, whiskers and cat-like faces.''';
-  }
-}
-
-class SearchHighlightPainter extends CustomPainter {
-  final String query;
-  final int currentMatch;
-
-  SearchHighlightPainter({
-    required this.query,
-    required this.currentMatch,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (query.isEmpty) return;
-    
-    final paint = Paint()
-      ..color = AppTheme.warningColor.withValues(alpha: 0.3)
-      ..style = PaintingStyle.fill;
-    
-    final currentPaint = Paint()
-      ..color = AppTheme.accentColor.withValues(alpha: 0.5)
-      ..style = PaintingStyle.fill;
-    
-    // Mock highlight rectangles
-    final highlights = [
-      Rect.fromLTWH(20, 100, 120, 20),
-      Rect.fromLTWH(50, 200, 80, 20),
-      Rect.fromLTWH(30, 300, 100, 20),
-    ];
-    
-    for (int i = 0; i < highlights.length; i++) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(highlights[i], const Radius.circular(4)),
-        i == (currentMatch - 1) ? currentPaint : paint,
+    if (isNetworkUrl) {
+      return SfPdfViewer.network(
+        _document!.filePath,
+        controller: _pdfViewerController,
+        onPageChanged: (PdfPageChangedDetails details) {
+          setState(() {
+            _currentPage = details.newPageNumber;
+          });
+        },
+        onDocumentLoaded: (PdfDocumentLoadedDetails details) {
+          setState(() {
+             _totalPages = details.document.pages.count;
+          });
+        },
       );
+    } else if (!kIsWeb) {
+      return SfPdfViewer.file(
+        File(_document!.filePath),
+        controller: _pdfViewerController,
+        onPageChanged: (PdfPageChangedDetails details) {
+          setState(() {
+            _currentPage = details.newPageNumber;
+          });
+        },
+        onDocumentLoaded: (PdfDocumentLoadedDetails details) {
+          setState(() {
+             _totalPages = details.document.pages.count;
+          });
+        },
+      );
+    } else {
+      return const Center(child: Text('Local file access is not supported on Web'));
     }
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+

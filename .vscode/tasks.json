@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "flutter: pub get",
+            "type": "shell",
+            "command": "${workspaceFolder}/flutterreader_pro/flutter_sdk/bin/flutter pub get",
+            "options": {
+                "cwd": "${workspaceFolder}/flutterreader_pro"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "flutter: run (web-server)",
+            "type": "shell",
+            "command": "${workspaceFolder}/flutterreader_pro/flutter_sdk/bin/flutter run -d web-server --web-port 8080 --web-hostname 0.0.0.0 --release",
+            "options": {
+                "cwd": "${workspaceFolder}/flutterreader_pro"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "flutter: run (linux)",
+            "type": "shell",
+            "command": "${workspaceFolder}/flutterreader_pro/flutter_sdk/bin/flutter run -d linux",
+            "options": {
+                "cwd": "${workspaceFolder}/flutterreader_pro"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "flutter: build web",
+            "type": "shell",
+            "command": "${workspaceFolder}/flutterreader_pro/flutter_sdk/bin/flutter run",
+            "options": {
+                "cwd": "${workspaceFolder}/flutterreader_pro"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

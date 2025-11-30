@@ -142,7 +142,7 @@ class _PdfBookmarkPanelState extends State<PdfBookmarkPanel>
       'note': _noteController.text.trim(),
       'page': 1, // Current page would be passed from parent
       'icon': _bookmarkIcons[0].codePoint,
-      'color': AppTheme.accentColor.value,
+      'color': AppTheme.accentColor.toARGB32(),
       'createdAt': DateTime.now().toIso8601String(),
     };
 
@@ -317,7 +317,7 @@ class _PdfBookmarkPanelState extends State<PdfBookmarkPanel>
                   padding: EdgeInsets.all(2.w),
                   decoration: BoxDecoration(
                     color: Color(bookmark['color'] as int? ??
-                            AppTheme.accentColor.value)
+                            AppTheme.accentColor.toARGB32())
                         .withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -327,7 +327,7 @@ class _PdfBookmarkPanelState extends State<PdfBookmarkPanel>
                       fontFamily: 'MaterialIcons',
                     ),
                     color: Color(bookmark['color'] as int? ??
-                        AppTheme.accentColor.value),
+                        AppTheme.accentColor.toARGB32()),
                     size: 20,
                   ),
                 ),

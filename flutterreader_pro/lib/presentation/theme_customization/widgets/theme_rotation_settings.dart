@@ -204,7 +204,7 @@ class _ThemeRotationSettingsState extends State<ThemeRotationSettings>
                   Switch(
                     value: widget.isEnabled,
                     onChanged: widget.onEnabledChanged,
-                    activeColor: AppTheme.accentColor,
+                    activeThumbColor: AppTheme.accentColor,
                     activeTrackColor:
                         AppTheme.accentColor.withValues(alpha: 0.3),
                     inactiveThumbColor: AppTheme.textSecondary,

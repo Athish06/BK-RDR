@@ -1,0 +1,11 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "flutterreader_pro",
+            "request": "launch",
+            "type": "dart",
+            "program": "flutterreader_pro/lib/main.dart"
+        }
+    ]
+}

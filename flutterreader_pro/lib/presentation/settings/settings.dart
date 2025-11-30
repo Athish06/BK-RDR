@@ -576,7 +576,7 @@ class _SettingsState extends State<Settings> with TickerProviderStateMixin {
     return Switch(
       value: true,
       onChanged: (value) => _toggleAutoBrightness(),
-      activeColor: AppTheme.accentColor,
+      activeThumbColor: AppTheme.accentColor,
     );
   }
 
@@ -618,7 +618,7 @@ class _SettingsState extends State<Settings> with TickerProviderStateMixin {
     return Switch(
       value: true,
       onChanged: (value) => _toggleAutoSave(),
-      activeColor: AppTheme.successColor,
+      activeThumbColor: AppTheme.successColor,
     );
   }
 
@@ -643,7 +643,7 @@ class _SettingsState extends State<Settings> with TickerProviderStateMixin {
     return Switch(
       value: true,
       onChanged: (value) => _toggleBiometric(),
-      activeColor: AppTheme.accentColor,
+      activeThumbColor: AppTheme.accentColor,
     );
   }
 
@@ -651,7 +651,7 @@ class _SettingsState extends State<Settings> with TickerProviderStateMixin {
     return Switch(
       value: false,
       onChanged: (value) => _toggleAnalytics(),
-      activeColor: AppTheme.accentColor,
+      activeThumbColor: AppTheme.accentColor,
     );
   }
 

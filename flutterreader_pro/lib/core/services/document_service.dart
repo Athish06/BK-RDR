@@ -1,10 +1,8 @@
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/document_model.dart';
 
 class DocumentService {
@@ -12,107 +10,177 @@ class DocumentService {
   DocumentService._internal();
   factory DocumentService() => _instance ??= DocumentService._internal();
 
-  static const String _documentsKey = 'user_documents';
+  final _supabase = Supabase.instance.client;
 
-  // Get app documents directory
-  Future<Directory> getAppDocumentsDirectory() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final pdfDir = Directory(path.join(appDir.path, 'pdf_documents'));
-    if (!await pdfDir.exists()) {
-      await pdfDir.create(recursive: true);
-    }
-    return pdfDir;
-  }
-
-  // Pick files from device storage
+  // Pick files and upload to Supabase
   Future<List<DocumentModel>?> pickAndImportDocuments() async {
     try {
+      print('📂 Picking files...');
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf'],
         allowMultiple: true,
+        withData: true, // Important for Web
       );
 
       if (result != null && result.files.isNotEmpty) {
+        print('✅ Files picked: ${result.files.length}');
         List<DocumentModel> importedDocs = [];
-        final appDir = await getAppDocumentsDirectory();
 
         for (PlatformFile file in result.files) {
-          if (file.path != null) {
-            // Copy file to app directory
-            final originalFile = File(file.path!);
-            final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
-            final newPath = path.join(appDir.path, fileName);
-            final copiedFile = await originalFile.copy(newPath);
+          // Sanitize filename
+          final safeName = file.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+          final fileName = '${DateTime.now().millisecondsSinceEpoch}_$safeName';
+          final filePath = 'uploads/$fileName';
+          
+          print('🚀 Uploading $fileName...');
 
-            // Create document model
-            final document = DocumentModel(
-              id: DateTime.now().millisecondsSinceEpoch.toString(),
-              title: path.basenameWithoutExtension(file.name),
-              filePath: copiedFile.path,
-              originalName: file.name,
-              fileSize: file.size,
-              dateAdded: DateTime.now(),
-              lastOpened: DateTime.now(),
-            );
-
-            importedDocs.add(document);
+          // Upload to Supabase Storage
+          try {
+            if (kIsWeb) {
+              if (file.bytes != null) {
+                await _supabase.storage.from('document_files').uploadBinary(
+                  filePath,
+                  file.bytes!,
+                  fileOptions: const FileOptions(upsert: true),
+                );
+              } else {
+                throw Exception('File bytes are null on Web');
+              }
+            } else {
+              if (file.path != null) {
+                await _supabase.storage.from('document_files').upload(
+                  filePath,
+                  File(file.path!),
+                  fileOptions: const FileOptions(upsert: true),
+                );
+              } else if (file.bytes != null) {
+                 await _supabase.storage.from('document_files').uploadBinary(
+                  filePath,
+                  file.bytes!,
+                  fileOptions: const FileOptions(upsert: true),
+                );
+              } else {
+                throw Exception('File path and bytes are null');
+              }
+            }
+            print('✅ Upload successful');
+          } catch (uploadError) {
+            print('❌ Upload failed: $uploadError');
+            throw Exception('Failed to upload file: $uploadError');
           }
+
+          // Get Public URL
+          final publicUrl = _supabase.storage.from('document_files').getPublicUrl(filePath);
+          print('🔗 Public URL: $publicUrl');
+
+          // Create document record in DB
+          final docData = {
+            'title': path.basenameWithoutExtension(file.name),
+            'file_path': publicUrl,
+            'storage_path': filePath,
+            'original_name': file.name,
+            'file_size': file.size,
+            'created_at': DateTime.now().toIso8601String(),
+            'last_opened': DateTime.now().toIso8601String(),
+            'reading_progress': 0.0,
+            'is_favorite': false,
+            'status': 'new',
+          };
+
+          print('📝 Inserting into DB...');
+          final response = await _supabase
+              .from('documents')
+              .insert(docData)
+              .select()
+              .single();
+          
+          print('✅ DB Insert successful');
+          importedDocs.add(DocumentModel.fromJson(response));
         }
 
-        // Save to storage
-        await _saveDocuments(importedDocs);
         return importedDocs;
+      } else {
+        print('⚠️ No files picked');
       }
     } catch (e) {
-      if (kDebugMode) print('Error picking files: $e');
+      print('❌ Error importing documents: $e');
+      rethrow; // Let the UI handle the error
     }
     return null;
   }
 
-  // Save documents to local storage
-  Future<void> _saveDocuments(List<DocumentModel> newDocuments) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final existingDocs = await getAllDocuments();
-      
-      final allDocs = [...existingDocs, ...newDocuments];
-      final jsonList = allDocs.map((doc) => doc.toJson()).toList();
-      
-      await prefs.setString(_documentsKey, jsonEncode(jsonList));
-    } catch (e) {
-      if (kDebugMode) print('Error saving documents: $e');
-    }
-  }
-
-  // Get all documents
+  // Get all documents from Supabase
   Future<List<DocumentModel>> getAllDocuments() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final jsonString = prefs.getString(_documentsKey);
+      final response = await _supabase
+          .from('documents')
+          .select()
+          .order('last_opened', ascending: false);
       
-      if (jsonString != null) {
-        final List<dynamic> jsonList = jsonDecode(jsonString);
-        return jsonList.map((json) => DocumentModel.fromJson(json)).toList();
-      }
+      return (response as List).map((json) => DocumentModel.fromJson(json)).toList();
     } catch (e) {
       if (kDebugMode) print('Error getting documents: $e');
+      return [];
     }
-    return [];
   }
 
-  // Update document
-  Future<void> updateDocument(DocumentModel updatedDocument) async {
+  // Get recent documents
+  Future<List<DocumentModel>> getRecentDocuments() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final allDocs = await getAllDocuments();
+      final response = await _supabase
+          .from('documents')
+          .select()
+          .order('last_opened', ascending: false)
+          .limit(5);
       
-      final index = allDocs.indexWhere((doc) => doc.id == updatedDocument.id);
-      if (index != -1) {
-        allDocs[index] = updatedDocument;
-        final jsonList = allDocs.map((doc) => doc.toJson()).toList();
-        await prefs.setString(_documentsKey, jsonEncode(jsonList));
-      }
+      return (response as List).map((json) => DocumentModel.fromJson(json)).toList();
+    } catch (e) {
+      if (kDebugMode) print('Error getting recent documents: $e');
+      return [];
+    }
+  }
+
+  // Get continue reading documents
+  Future<List<DocumentModel>> getContinueReadingDocuments() async {
+    try {
+      final response = await _supabase
+          .from('documents')
+          .select()
+          .gt('reading_progress', 0.0)
+          .lt('reading_progress', 1.0)
+          .order('last_opened', ascending: false)
+          .limit(5);
+      
+      return (response as List).map((json) => DocumentModel.fromJson(json)).toList();
+    } catch (e) {
+      if (kDebugMode) print('Error getting continue reading documents: $e');
+      return [];
+    }
+  }
+  
+  // Update document progress
+  Future<void> updateProgress(String id, double progress) async {
+    try {
+      await _supabase.from('documents').update({
+        'reading_progress': progress,
+        'last_opened': DateTime.now().toIso8601String(),
+        'status': progress >= 1.0 ? 'completed' : 'in_progress',
+      }).eq('id', id);
+    } catch (e) {
+      if (kDebugMode) print('Error updating progress: $e');
+    }
+  }
+
+  // Update document details (status, favorite, etc.)
+  Future<void> updateDocument(DocumentModel document) async {
+    try {
+      await _supabase.from('documents').update({
+        'title': document.title,
+        'is_favorite': document.isFavorite,
+        'status': document.status,
+        'last_opened': DateTime.now().toIso8601String(),
+      }).eq('id', document.id);
     } catch (e) {
       if (kDebugMode) print('Error updating document: $e');
     }
@@ -121,60 +189,37 @@ class DocumentService {
   // Delete document
   Future<void> deleteDocument(String documentId) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final allDocs = await getAllDocuments();
+      // Get storage path first
+      final doc = await _supabase
+          .from('documents')
+          .select('storage_path')
+          .eq('id', documentId)
+          .single();
       
-      final docToDelete = allDocs.firstWhere((doc) => doc.id == documentId);
-      
-      // Delete physical file
-      final file = File(docToDelete.filePath);
-      if (await file.exists()) {
-        await file.delete();
+      if (doc['storage_path'] != null) {
+        await _supabase.storage.from('document_files').remove([doc['storage_path']]);
       }
-      
-      // Remove from list
-      allDocs.removeWhere((doc) => doc.id == documentId);
-      final jsonList = allDocs.map((doc) => doc.toJson()).toList();
-      await prefs.setString(_documentsKey, jsonEncode(jsonList));
+
+      await _supabase.from('documents').delete().eq('id', documentId);
     } catch (e) {
       if (kDebugMode) print('Error deleting document: $e');
     }
   }
 
-  // Get documents by category
-  Future<Map<String, List<DocumentModel>>> getDocumentsByCategory() async {
-    final allDocs = await getAllDocuments();
-    
-    return {
-      'Favorites': allDocs.where((doc) => doc.isFavorite).toList(),
-      'In Progress': allDocs.where((doc) => doc.progressStatus == 'in_progress').toList(),
-      'Completed': allDocs.where((doc) => doc.progressStatus == 'completed').toList(),
-      'Recent': allDocs.where((doc) => doc.progressStatus == 'new').take(10).toList(),
-    };
-  }
-
   // Search documents
   Future<List<DocumentModel>> searchDocuments(String query) async {
-    final allDocs = await getAllDocuments();
-    if (query.isEmpty) return allDocs;
+    if (query.isEmpty) return getAllDocuments();
     
-    return allDocs.where((doc) => 
-      doc.title.toLowerCase().contains(query.toLowerCase()) ||
-      doc.originalName.toLowerCase().contains(query.toLowerCase())
-    ).toList();
-  }
-
-  // Get library statistics
-  Future<Map<String, dynamic>> getLibraryStats() async {
-    final allDocs = await getAllDocuments();
-    final totalSize = allDocs.fold<int>(0, (sum, doc) => sum + doc.fileSize);
-    
-    return {
-      'totalDocuments': allDocs.length,
-      'totalSize': totalSize,
-      'favorites': allDocs.where((doc) => doc.isFavorite).length,
-      'inProgress': allDocs.where((doc) => doc.progressStatus == 'in_progress').length,
-      'completed': allDocs.where((doc) => doc.progressStatus == 'completed').length,
-    };
+    try {
+      final response = await _supabase
+          .from('documents')
+          .select()
+          .ilike('title', '%$query%');
+      
+      return (response as List).map((json) => DocumentModel.fromJson(json)).toList();
+    } catch (e) {
+      if (kDebugMode) print('Error searching documents: $e');
+      return [];
+    }
   }
 }

@@ -85,8 +85,8 @@ class _PdfLibraryState extends State<PdfLibrary> with TickerProviderStateMixin {
       setState(() {
         _documentShelves = {
           'Favorites': documents.where((doc) => doc.isFavorite).toList(),
-          'In Progress': documents.where((doc) => doc.status == 'In Progress').toList(),
-          'Completed': documents.where((doc) => doc.status == 'Completed').toList(),
+          'In Progress': documents.where((doc) => doc.status == 'in_progress').toList(),
+          'Completed': documents.where((doc) => doc.status == 'completed').toList(),
           'Recent': documents.where((doc) {
             final daysDiff = DateTime.now().difference(doc.lastOpened).inDays;
             return daysDiff <= 7;
@@ -371,8 +371,14 @@ class _PdfLibraryState extends State<PdfLibrary> with TickerProviderStateMixin {
     
     try {
       // Update document status
-      String newStatus = targetShelf == 'Favorites' ? document.status : targetShelf;
-      bool newFavoriteStatus = targetShelf == 'Favorites' || document.isFavorite;
+      String newStatus = document.status;
+      if (targetShelf == 'In Progress') {
+        newStatus = 'in_progress';
+      } else if (targetShelf == 'Completed') {
+        newStatus = 'completed';
+      }
+      
+      bool newFavoriteStatus = targetShelf == 'Favorites' ? true : document.isFavorite;
       
       final updatedDocument = document.copyWith(
         status: newStatus,
@@ -649,8 +655,99 @@ class _PdfLibraryState extends State<PdfLibrary> with TickerProviderStateMixin {
     }
   }
 
-  // Add file import functionality
-  void _handleImportFiles() async {
+  // Show import options
+  void _handleImportFiles() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surfaceColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Padding(
+        padding: EdgeInsets.all(4.w),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 0.5.h,
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            SizedBox(height: 3.h),
+            Text(
+              'Import PDF',
+              style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
+                color: AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: 3.h),
+            _buildImportOption(
+              icon: 'folder',
+              title: 'Local Storage',
+              subtitle: 'Browse files on your device',
+              onTap: () {
+                Navigator.pop(context);
+                _importFiles();
+              },
+            ),
+            _buildImportOption(
+              icon: 'cloud_upload',
+              title: 'Google Drive',
+              subtitle: 'Import from Google Drive',
+              onTap: () {
+                Navigator.pop(context);
+                _importFiles(); // FilePicker handles Drive on mobile
+              },
+            ),
+            SizedBox(height: 2.h),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImportOption({
+    required String icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: Container(
+        padding: EdgeInsets.all(3.w),
+        decoration: BoxDecoration(
+          gradient: AppTheme.gradientDecoration().gradient,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: CustomIconWidget(
+          iconName: icon,
+          color: Colors.white,
+          size: 24,
+        ),
+      ),
+      title: Text(
+        title,
+        style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
+          color: AppTheme.textPrimary,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+          color: AppTheme.textSecondary,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  // Actual file import functionality
+  void _importFiles() async {
     try {
       final importedDocuments = await _documentService.pickAndImportDocuments();
       if (importedDocuments != null && importedDocuments.isNotEmpty) {

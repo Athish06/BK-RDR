@@ -290,7 +290,7 @@ class _CustomBottomBarState extends State<CustomBottomBar>
       onTap: () => _handleTap(context, index, item.route),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), // Further reduced padding
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
           color: isSelected
               ? AppTheme.accentColor.withAlpha(26)
@@ -299,22 +299,26 @@ class _CustomBottomBarState extends State<CustomBottomBar>
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center, // Center content vertically
           children: [
             Icon(
               isSelected ? item.activeIcon : item.icon,
-              size: 18, // Further reduced from 20 to 18
+              size: 18,
               color: isSelected ? AppTheme.accentColor : AppTheme.textSecondary,
             ),
             if (widget.showLabels) ...[
-              const SizedBox(height: 1), // Further reduced from 2 to 1
-              Text(
-                item.label,
-                style: GoogleFonts.inter(
-                  fontSize: 9, // Further reduced from 10 to 9
-                  fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
-                  color: isSelected
-                      ? AppTheme.accentColor
-                      : AppTheme.textSecondary,
+              const SizedBox(height: 1),
+              Flexible( // Wrap text in Flexible to prevent overflow
+                child: Text(
+                  item.label,
+                  style: GoogleFonts.inter(
+                    fontSize: 9,
+                    fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
+                    color: isSelected
+                        ? AppTheme.accentColor
+                        : AppTheme.textSecondary,
+                  ),
+                  overflow: TextOverflow.ellipsis, // Handle text overflow
                 ),
               ),
             ],

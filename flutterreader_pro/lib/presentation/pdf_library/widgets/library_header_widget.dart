@@ -71,6 +71,22 @@ class _LibraryHeaderWidgetState extends State<LibraryHeaderWidget>
         children: [
           Row(
             children: [
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  padding: EdgeInsets.all(2.w),
+                  margin: EdgeInsets.only(right: 3.w),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceColor,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: CustomIconWidget(
+                    iconName: 'arrow_back',
+                    color: AppTheme.textPrimary,
+                    size: 20,
+                  ),
+                ),
+              ),
               Expanded(
                 child: Container(
                   height: 6.h,

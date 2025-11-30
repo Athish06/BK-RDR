@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/app_export.dart';
 import '../../widgets/custom_app_bar.dart';
@@ -15,55 +16,30 @@ class HomeDashboard extends StatefulWidget {
 
 class _HomeDashboardState extends State<HomeDashboard> {
   bool _isRefreshing = false;
+  final DocumentService _documentService = DocumentService();
+  List<DocumentModel> _continueReadingBooks = [];
+  List<DocumentModel> _recentBooks = [];
+  bool _isLoading = true;
 
-  // Mock data for books
-  final List<Map<String, dynamic>> _continueReadingBooks = [
-    {
-      "id": 1,
-      "title": "The Art of Computer Programming",
-      "author": "Donald E. Knuth",
-      "progress": 0.65,
-      "currentPage": 234,
-      "totalPages": 360,
-    },
-    {
-      "id": 2,
-      "title": "Clean Code: A Handbook",
-      "author": "Robert C. Martin",
-      "progress": 0.42,
-      "currentPage": 126,
-      "totalPages": 300,
-    },
-    {
-      "id": 3,
-      "title": "Design Patterns",
-      "author": "Gang of Four",
-      "progress": 0.28,
-      "currentPage": 84,
-      "totalPages": 395,
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
 
-  final List<Map<String, dynamic>> _recentBooks = [
-    {
-      "id": 4,
-      "title": "JavaScript: The Good Parts",
-      "author": "Douglas Crockford",
-      "progress": 0.85,
-    },
-    {
-      "id": 5,
-      "title": "You Don't Know JS",
-      "author": "Kyle Simpson",
-      "progress": 0.33,
-    },
-    {
-      "id": 6,
-      "title": "Effective Java",
-      "author": "Joshua Bloch",
-      "progress": 0.72,
-    },
-  ];
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    final continueReading = await _documentService.getContinueReadingDocuments();
+    final recent = await _documentService.getRecentDocuments();
+    
+    if (mounted) {
+      setState(() {
+        _continueReadingBooks = continueReading;
+        _recentBooks = recent;
+        _isLoading = false;
+      });
+    }
+  }
 
   Future<void> _handleRefresh() async {
     if (_isRefreshing) return;
@@ -73,7 +49,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     });
 
     HapticFeedback.mediumImpact();
-    await Future.delayed(const Duration(milliseconds: 1500));
+    await _loadData();
 
     setState(() {
       _isRefreshing = false;
@@ -82,9 +58,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
     HapticFeedback.lightImpact();
   }
 
-  void _handleBookTap(Map<String, dynamic> book) {
+  void _handleBookTap(DocumentModel book) {
     HapticFeedback.lightImpact();
-    Navigator.pushNamed(context, '/pdf-reader');
+    Navigator.pushNamed(
+      context, 
+      '/pdf-reader',
+      arguments: book,
+    );
   }
 
   void _showImportOptions() {
@@ -333,6 +313,10 @@ class _HomeDashboardState extends State<HomeDashboard> {
   }
 
   Widget _buildContinueReading() {
+    if (_continueReadingBooks.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -363,7 +347,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
         ),
         SizedBox(height: 1.5.h), // Reduced spacing
         SizedBox(
-          height: 16.h, // Further reduced from 18.h to 16.h to prevent overflow
+          height: 26.h, // Increased from 22.h to 26.h to fix overflow
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: EdgeInsets.symmetric(horizontal: 4.w),
@@ -378,8 +362,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildBookCard(Map<String, dynamic> book) {
-    final progress = (book['progress'] as double).clamp(0.0, 1.0);
+  Widget _buildBookCard(DocumentModel book) {
+    final progress = book.readingProgress.clamp(0.0, 1.0);
 
     return GestureDetector(
       onTap: () => _handleBookTap(book),
@@ -425,23 +409,23 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
             // Book info
             Flexible(
-              fit: FlexFit.loose,
-              flex: 2,
+              fit: FlexFit.tight,
+              flex: 3, // Increased flex from 2 to 3 to give more space to text
               child: Padding(
-                padding: EdgeInsets.all(1.5.w), // Further reduced padding
+                padding: EdgeInsets.all(2.w), // Increased padding slightly
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min, // allow shrinking under tight height
+                  mainAxisSize: MainAxisSize.max,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Title + author block shrinks if space is tight
-                    Flexible(
-                      fit: FlexFit.loose,
+                    // Title + date block
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            book['title'] as String,
+                            book.title,
                             style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
                               color: AppTheme.textPrimary,
                               fontWeight: FontWeight.w600,
@@ -450,9 +434,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          SizedBox(height: 0.1.h),
+                          SizedBox(height: 0.5.h), // Increased spacing
                           Text(
-                            book['author'] as String,
+                            DateFormat.yMMMd().format(book.lastOpened),
                             style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
                               color: AppTheme.textSecondary,
                               fontSize: 9,
@@ -465,41 +449,31 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     ),
                     const SizedBox(height: 4),
 
-                    // Progress block also shrinks to fit
-                    Flexible(
-                      fit: FlexFit.loose,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '${(progress * 100).toInt()}%',
-                                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                                  color: AppTheme.accentColor,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 9,
-                                ),
+                    // Progress block
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '${(progress * 100).toInt()}%',
+                              style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                                color: AppTheme.accentColor,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 9,
                               ),
-                              Text(
-                                'Page ${book['currentPage']}',
-                                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                                  color: AppTheme.textSecondary,
-                                  fontSize: 9,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          LinearProgressIndicator(
-                            value: progress,
-                            backgroundColor: AppTheme.textSecondary.withValues(alpha: 0.2),
-                            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
-                            minHeight: 2,
-                          ),
-                        ],
-                      ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        LinearProgressIndicator(
+                          value: progress,
+                          backgroundColor: AppTheme.textSecondary.withValues(alpha: 0.2),
+                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
+                          minHeight: 2,
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -512,6 +486,20 @@ class _HomeDashboardState extends State<HomeDashboard> {
   }
 
   Widget _buildRecentBooks() {
+    if (_recentBooks.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: EdgeInsets.all(4.w),
+          child: Text(
+            'No recent books',
+            style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+              color: AppTheme.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -540,8 +528,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildRecentBookTile(Map<String, dynamic> book) {
-    final progress = (book['progress'] as double).clamp(0.0, 1.0);
+  Widget _buildRecentBookTile(DocumentModel book) {
+    final progress = book.readingProgress.clamp(0.0, 1.0);
 
     return Container(
       margin: EdgeInsets.only(bottom: 1.5.h), // Reduced margin to prevent overflow
@@ -576,7 +564,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           ),
         ),
         title: Text(
-          book['title'] as String,
+          book.title,
           style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
             color: AppTheme.textPrimary,
             fontWeight: FontWeight.w600,
@@ -589,7 +577,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           children: [
             SizedBox(height: 1.h),
             Text(
-              book['author'] as String,
+              DateFormat.yMMMd().format(book.lastOpened),
               style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
                 color: AppTheme.textSecondary,
               ),

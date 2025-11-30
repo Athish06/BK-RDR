@@ -370,7 +370,7 @@ class _ReadingModePreferencesState extends State<ReadingModePreferences>
                 Switch(
                   value: widget.animationsEnabled,
                   onChanged: widget.onAnimationsToggled,
-                  activeColor: AppTheme.accentColor,
+                  activeThumbColor: AppTheme.accentColor,
                   activeTrackColor: AppTheme.accentColor.withValues(alpha: 0.3),
                   inactiveThumbColor: AppTheme.textSecondary,
                   inactiveTrackColor:

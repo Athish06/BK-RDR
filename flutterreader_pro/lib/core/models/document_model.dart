@@ -31,7 +31,7 @@ class DocumentModel {
       'originalName': originalName,
       'fileSize': fileSize,
       'dateAdded': dateAdded.toIso8601String(),
-      'lastOpened': lastOpened.toIso8601String(),
+      'lastOpened': lastOpenedFormatted, // Use formatted string for UI
       'readingProgress': readingProgress,
       'isFavorite': isFavorite,
       'status': status,
@@ -40,15 +40,15 @@ class DocumentModel {
 
   static DocumentModel fromJson(Map<String, dynamic> json) {
     return DocumentModel(
-      id: json['id'],
-      title: json['title'],
-      filePath: json['filePath'],
-      originalName: json['originalName'],
-      fileSize: json['fileSize'],
-      dateAdded: DateTime.parse(json['dateAdded']),
-      lastOpened: DateTime.parse(json['lastOpened']),
-      readingProgress: json['readingProgress']?.toDouble() ?? 0.0,
-      isFavorite: json['isFavorite'] ?? false,
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      filePath: json['file_path'] ?? json['filePath'] ?? '',
+      originalName: json['original_name'] ?? json['originalName'] ?? '',
+      fileSize: json['file_size'] ?? json['fileSize'] ?? 0,
+      dateAdded: DateTime.tryParse(json['created_at'] ?? json['dateAdded'] ?? '') ?? DateTime.now(),
+      lastOpened: DateTime.tryParse(json['last_opened'] ?? json['lastOpened'] ?? '') ?? DateTime.now(),
+      readingProgress: (json['reading_progress'] ?? json['readingProgress'] ?? 0.0).toDouble(),
+      isFavorite: json['is_favorite'] ?? json['isFavorite'] ?? false,
       status: json['status'] ?? 'new',
     );
   }

@@ -407,7 +407,7 @@ class _BackupSettingsWidgetState extends State<BackupSettingsWidget>
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: AppTheme.accentColor,
+            activeThumbColor: AppTheme.accentColor,
             inactiveThumbColor: AppTheme.textSecondary,
             inactiveTrackColor: AppTheme.textSecondary.withValues(alpha: 0.3),
           ),
