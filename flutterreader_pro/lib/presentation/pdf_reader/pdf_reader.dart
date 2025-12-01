@@ -1,9 +1,13 @@
+import 'package:universal_html/html.dart' as html;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sizer/sizer.dart';
 import 'package:universal_io/io.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:pdfrx/pdfrx.dart';
+import 'package:dio/dio.dart';
+import 'dart:typed_data';
+import 'models/pdf_annotation.dart';
 
 import '../../core/app_export.dart';
 import './widgets/pdf_annotation_toolbar.dart';
@@ -11,7 +15,6 @@ import './widgets/pdf_bookmark_panel.dart';
 import './widgets/pdf_floating_controls.dart';
 import './widgets/pdf_quick_note_bubble.dart';
 import './widgets/pdf_search_overlay.dart';
-import './widgets/pdf_tts_player.dart';
 
 class PdfReader extends StatefulWidget {
   const PdfReader({super.key});
@@ -25,46 +28,184 @@ class _PdfReaderState extends State<PdfReader> {
   int _currentPage = 1;
   int _totalPages = 0;
   double _zoomLevel = 1.0;
-  bool _isTextReflowMode = false;
   String _selectedText = '';
+  bool _isDarkMode = false;
   
   // UI state
   bool _showControls = true;
   bool _showAnnotationToolbar = false;
   bool _showBookmarkPanel = false;
   bool _showSearchOverlay = false;
-  bool _showTTSPlayer = false;
-  
-  // Auto-scroll state
-  bool _isAutoScrolling = false;
-  double _autoScrollSpeed = 1.0;
   
   // Search state
   String _searchQuery = '';
   int _currentSearchMatch = 0;
   int _totalSearchMatches = 0;
-  
-  // TTS state
-  bool _isTTSPlaying = false;
-  bool _isTTSPaused = false;
-  double _ttsProgress = 0.0;
-  String _currentSentence = '';
-  double _ttsPlaybackSpeed = 1.0;
+  PdfTextSearcher? _textSearcher;
 
   DocumentModel? _document;
   final PdfViewerController _pdfViewerController = PdfViewerController();
   
+  // Loading state
+  Uint8List? _pdfBytes;
+  bool _isLoading = false;
+  String? _errorMessage;
+  bool _hasLoaded = false;
+
   // Bookmarks and notes
   final List<Map<String, dynamic>> _bookmarks = [];
-  
   final List<Map<String, dynamic>> _quickNotes = [];
+  
+  // Annotations
+  final List<PdfAnnotation> _annotations = [];
+  bool _isAnnotating = false; // True when actively drawing/highlighting
+  bool _isDrawing = false; // True when drawing tool is in active use
+  AnnotationType _currentTool = AnnotationType.drawing; // Default to drawing
+  bool _isToolActive = false; // Whether a tool is actively being used
+  String? _currentAnnotationId; // ID of annotation being created
+  String? _currentDrawingAnnotationId; // ID of drawing annotation being created
+  Offset? _annotationStartOffset; // Start position for rectangle-based annotations
+  List<PdfPageTextRange> _selectedTextRanges = []; // For text selection (legacy)
+  
+  // Floating navbar state
+  bool _showFloatingNavbar = true; // Show/hide the floating navbar
+  bool _showNotesPanel = false; // Show/hide saved notes panel
+  bool _isPanMode = false; // Pan/cursor mode for moving around when zoomed
+  bool _useTextHighlight = false; // If true, use text-detection highlight; if false, use paint highlight
+  bool _showZoomControls = true; // Show/hide zoom control bar
+  
+  // Selected annotation for showing comment
+  String? _selectedAnnotationId; // Currently selected annotation for note viewing
+  Offset? _annotationCommentPosition; // Position to show the annotation comment
+
+  Color _selectedAnnotationColor = const Color(0xFFFFEB3B); // Default yellow
+  
+  // Text detection for underline
+  Map<int, PdfPageRawText?> _pageTextCache = {}; // Cache for page raw text data
+  List<Rect> _detectedTextRects = []; // Detected text rectangles for current underline
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final args = ModalRoute.of(context)?.settings.arguments;
-    if (args is DocumentModel) {
+    if (args is DocumentModel && !_hasLoaded) {
       _document = args;
+      _loadPdf();
+      _hasLoaded = true;
+    }
+  }
+
+  Future<void> _loadPdf() async {
+    if (_document == null) return;
+    
+    try {
+      setState(() { _isLoading = true; _errorMessage = null; });
+      print('📥 Starting PDF load for: ${_document!.title}');
+      
+      if (kIsWeb || _document!.filePath.startsWith('http')) {
+         print('🌐 Downloading PDF from URL: ${_document!.filePath}');
+         
+         if (kIsWeb) {
+           try {
+             final request = await html.HttpRequest.request(
+               _document!.filePath,
+               responseType: 'arraybuffer',
+             );
+             
+             if (request.status == 200) {
+               final ByteBuffer buffer = request.response;
+               final Uint8List bytes = buffer.asUint8List();
+               
+               print('✅ Web Download complete. Size: ${bytes.length} bytes');
+               if (bytes.isNotEmpty) {
+                 final header = String.fromCharCodes(bytes.take(5));
+                 print('🔍 PDF Header: $header');
+               }
+
+               // Create a defensive copy of the bytes to ensure we own the memory
+               // and it's not a view into a shared buffer (which can cause issues with Syncfusion)
+               final cleanBytes = Uint8List.fromList(bytes);
+
+               if (mounted) {
+                 setState(() {
+                   _pdfBytes = cleanBytes;
+                   _isLoading = false;
+                 });
+               }
+               return;
+             }
+           } catch (e) {
+             print('⚠️ Web XHR failed, falling back to Dio: $e');
+           }
+         }
+
+         final response = await Dio().get(
+           _document!.filePath,
+           options: Options(
+             responseType: ResponseType.bytes,
+             validateStatus: (status) => status! < 500,
+           ),
+         );
+         
+         if (response.statusCode == 200) {
+           print('✅ Download complete. Size: ${response.data.length} bytes');
+           print('🔍 Data Type: ${response.data.runtimeType}');
+           
+           List<int> bytesList;
+           if (response.data is List<int>) {
+             bytesList = response.data;
+           } else if (response.data is List) {
+             bytesList = List<int>.from(response.data);
+           } else {
+             throw Exception('Unexpected data type: ${response.data.runtimeType}');
+           }
+
+           if (bytesList.isNotEmpty) {
+             final header = String.fromCharCodes(bytesList.take(5));
+             print('🔍 PDF Header: $header'); // Should be %PDF-
+             
+             final len = bytesList.length;
+             final tail = String.fromCharCodes(bytesList.sublist(len - 6, len));
+             print('🔍 PDF Tail: $tail'); // Should be %%EOF
+           }
+
+           // Create a defensive copy
+           final cleanBytes = Uint8List.fromList(bytesList);
+
+           if (mounted) {
+             setState(() {
+               _pdfBytes = cleanBytes;
+               _isLoading = false;
+             });
+           }
+         } else {
+           print('❌ Download failed with status: ${response.statusCode}');
+           throw Exception('Failed to download PDF (Status: ${response.statusCode})');
+         }
+      } else {
+         // Local file (not web)
+         print('📂 Loading local file: ${_document!.filePath}');
+         final file = File(_document!.filePath);
+         if (await file.exists()) {
+           final bytes = await file.readAsBytes();
+           if (mounted) {
+             setState(() {
+               _pdfBytes = bytes;
+               _isLoading = false;
+             });
+           }
+         } else {
+           throw Exception('Local file not found: ${_document!.filePath}');
+         }
+      }
+    } catch (e) {
+      print('❌ Error loading PDF: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Failed to load PDF: $e';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -85,36 +226,705 @@ class _PdfReaderState extends State<PdfReader> {
     });
   }
 
+  // Handle text selection changes (legacy - for fallback text selection)
+  void _handleTextSelectionChange(PdfTextSelection? selection) async {
+    if (selection == null || !selection.hasSelectedText) {
+      return;
+    }
+    
+    final selectedText = await selection.getSelectedText();
+    print('🔍 Text selection changed: $selectedText');
+    
+    // Store text ranges for potential annotation
+    final ranges = await selection.getSelectedTextRanges();
+    if (ranges.isNotEmpty) {
+      setState(() {
+        _selectedText = selectedText;
+        _selectedTextRanges = ranges;
+        _showAnnotationToolbar = true;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _textSearcher?.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
   void _toggleControls() {
-    setState(() {
-      _showControls = !_showControls;
-    });
+    // If tool is active, just minimize UI controls but keep tool working
+    if (_isToolActive) {
+      setState(() {
+        _showFloatingNavbar = false;
+        _showAnnotationToolbar = false;
+        _showSearchOverlay = false;
+        _showBookmarkPanel = false;
+        _showNotesPanel = false;
+        _showZoomControls = false;
+        _selectedAnnotationId = null;
+        _annotationCommentPosition = null;
+      });
+      return; // Don't toggle controls, keep tool active
+    }
     
-    if (_showControls) {
+    // If any overlay is open (no tool active), close all controls
+    if (_showFloatingNavbar || _showSearchOverlay || _showBookmarkPanel || _showNotesPanel) {
+      setState(() {
+        _showControls = false;
+        _showFloatingNavbar = false;
+        _showAnnotationToolbar = false;
+        _showSearchOverlay = false;
+        _showBookmarkPanel = false;
+        _showNotesPanel = false;
+        _showZoomControls = false;
+        _selectedAnnotationId = null;
+        _annotationCommentPosition = null;
+      });
+    } else {
+      // Nothing visible, show controls
+      setState(() {
+        _showControls = true;
+        _showFloatingNavbar = true;
+      });
       _setupAutoHideControls();
     }
   }
+  
+  // Load text data for a page (for underline text detection)
+  Future<void> _loadPageText(int pageNumber) async {
+    if (_pageTextCache.containsKey(pageNumber)) return;
+    
+    try {
+      if (_pdfViewerController.isReady) {
+        final document = _pdfViewerController.document;
+        final page = document.pages[pageNumber - 1];
+        final rawText = await page.loadText();
+        if (rawText != null) {
+          _pageTextCache[pageNumber] = rawText;
+          print('📝 Loaded text for page $pageNumber: ${rawText.fullText.length} chars, ${rawText.charRects.length} rects');
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading page text: $e');
+    }
+  }
+  
+  // Detect text at position and add to detected rects (word-level detection)
+  void _detectTextAtPosition(Offset position, int pageNumber, Size pageSize) {
+    final pageText = _pageTextCache[pageNumber];
+    if (pageText == null || pageText.charRects.isEmpty) return;
+    
+    try {
+      final page = _pdfViewerController.document.pages[pageNumber - 1];
+      final scaleX = pageSize.width / page.width;
+      final scaleY = pageSize.height / page.height;
+      
+      final fullText = pageText.fullText;
+      final charRects = pageText.charRects;
+      
+      // Find the character at the cursor position
+      for (int i = 0; i < charRects.length && i < fullText.length; i++) {
+        final charRect = charRects[i];
+        
+        // Convert PDF coordinates to widget coordinates
+        final widgetRect = Rect.fromLTRB(
+          charRect.left * scaleX,
+          pageSize.height - (charRect.top * scaleY),
+          charRect.right * scaleX,
+          pageSize.height - (charRect.bottom * scaleY),
+        );
+        
+        // Check if cursor is near this character
+        final expandedRect = widgetRect.inflate(8);
+        if (expandedRect.contains(position)) {
+          // Found a character at cursor - now find the whole word
+          final wordBounds = _findWordBounds(fullText, charRects, i, scaleX, scaleY, pageSize.height);
+          
+          if (wordBounds != null) {
+            // Check if this word is already detected
+            bool alreadyDetected = _detectedTextRects.any((r) => 
+              (r.left - wordBounds.left).abs() < 5 && 
+              (r.right - wordBounds.right).abs() < 5 &&
+              (r.top - wordBounds.top).abs() < 5
+            );
+            
+            if (!alreadyDetected) {
+              setState(() {
+                _detectedTextRects.add(wordBounds);
+              });
+              // Extract the detected word for logging
+              final wordStart = _findWordStart(fullText, i);
+              final wordEnd = _findWordEnd(fullText, i);
+              final word = fullText.substring(wordStart, wordEnd);
+              print('📍 Detected word: "$word"');
+            }
+          }
+          break; // Found a character, no need to continue
+        }
+      }
+    } catch (e) {
+      print('❌ Error detecting text: $e');
+    }
+  }
+  
+  // Find word start index
+  int _findWordStart(String text, int index) {
+    int start = index;
+    while (start > 0 && !_isWordBoundary(text[start - 1])) {
+      start--;
+    }
+    return start;
+  }
+  
+  // Find word end index
+  int _findWordEnd(String text, int index) {
+    int end = index;
+    while (end < text.length && !_isWordBoundary(text[end])) {
+      end++;
+    }
+    return end;
+  }
+  
+  // Check if character is a word boundary
+  bool _isWordBoundary(String char) {
+    return char == ' ' || char == '\n' || char == '\t' || char == '.' || 
+           char == ',' || char == ':' || char == ';' || char == '!' || 
+           char == '?' || char == '(' || char == ')' || char == '[' || 
+           char == ']' || char == '{' || char == '}';
+  }
+  
+  // Find the bounding rectangle for a word
+  Rect? _findWordBounds(String text, List<PdfRect> charRects, int charIndex, 
+                        double scaleX, double scaleY, double pageHeight) {
+    final wordStart = _findWordStart(text, charIndex);
+    final wordEnd = _findWordEnd(text, charIndex);
+    
+    if (wordStart >= wordEnd || wordStart >= charRects.length) return null;
+    
+    // Calculate bounding box for all characters in the word
+    double minX = double.infinity;
+    double maxX = double.negativeInfinity;
+    double minY = double.infinity;
+    double maxY = double.negativeInfinity;
+    
+    for (int i = wordStart; i < wordEnd && i < charRects.length; i++) {
+      final rect = charRects[i];
+      final widgetRect = Rect.fromLTRB(
+        rect.left * scaleX,
+        pageHeight - (rect.top * scaleY),
+        rect.right * scaleX,
+        pageHeight - (rect.bottom * scaleY),
+      );
+      
+      if (widgetRect.left < minX) minX = widgetRect.left;
+      if (widgetRect.right > maxX) maxX = widgetRect.right;
+      if (widgetRect.top < minY) minY = widgetRect.top;
+      if (widgetRect.bottom > maxY) maxY = widgetRect.bottom;
+    }
+    
+    if (minX == double.infinity) return null;
+    
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
 
-  void _handleTextSelection(String text) {
-    if (text.isNotEmpty) {
+  // Handle starting an annotation (draw, highlight, or underline)
+  void _startAnnotation(Offset localPosition, int pageNumber) async {
+    if (!_isToolActive) return;
+    
+    // For underline, load page text first
+    if (_currentTool == AnnotationType.underline) {
+      await _loadPageText(pageNumber);
+      _detectedTextRects = [];
+    }
+    
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    print('🎨 Starting ${_currentTool.name} annotation at $localPosition on page $pageNumber');
+    
+    setState(() {
+      _isAnnotating = true;
+      _currentAnnotationId = id;
+      _annotationStartOffset = localPosition; // Store start position for rectangle bounds
+      _annotations.add(PdfAnnotation(
+        id: id,
+        pageNumber: pageNumber,
+        type: _currentTool,
+        color: _currentTool == AnnotationType.highlight 
+            ? _selectedAnnotationColor.withValues(alpha: 0.4)
+            : _selectedAnnotationColor,
+        points: [localPosition],
+        textRanges: [],
+      ));
+    });
+  }
+  
+  // Handle updating an annotation (adding points)
+  void _updateAnnotation(Offset localPosition, {int? pageNumber, Size? pageSize}) {
+    if (!_isAnnotating || _currentAnnotationId == null) return;
+    
+    final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+    if (index != -1) {
       setState(() {
-        _selectedText = text;
-        _showAnnotationToolbar = true;
+        _annotations[index] = _annotations[index].copyWith(
+          points: [..._annotations[index].points, localPosition],
+        );
       });
-      HapticFeedback.selectionClick();
+    }
+  }
+  
+  // Handle ending an annotation
+  void _endAnnotation() {
+    if (!_isAnnotating) return;
+    
+    // For underline, store the detected text rectangles
+    if (_currentTool == AnnotationType.underline && _currentAnnotationId != null) {
+      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+      if (index != -1 && _detectedTextRects.isNotEmpty) {
+        // Convert Rect list to points for storage
+        final textPoints = <Offset>[];
+        for (final rect in _detectedTextRects) {
+          // Store bottom-left and bottom-right of each text rect for underline
+          textPoints.add(Offset(rect.left, rect.bottom));
+          textPoints.add(Offset(rect.right, rect.bottom));
+        }
+        
+        setState(() {
+          _annotations[index] = _annotations[index].copyWith(
+            points: textPoints,
+          );
+        });
+      }
+    }
+    
+    print('🎨 Ending annotation: $_currentAnnotationId');
+    setState(() {
+      _isAnnotating = false;
+      _currentAnnotationId = null;
+      _annotationStartOffset = null;
+      _detectedTextRects = [];
+    });
+    HapticFeedback.lightImpact();
+  }
+  
+  // Select a tool and activate it
+  void _selectTool(AnnotationType tool) {
+    print('🔧 Tool selected: ${tool.name}');
+    setState(() {
+      _currentTool = tool;
+      _isToolActive = true;
+      _showFloatingNavbar = false; // Auto-minimize navbar when tool is selected
+      _showZoomControls = false; // Auto-minimize zoom controls
+      _isPanMode = false; // Disable pan mode when tool is active
+      _selectedAnnotationId = null; // Clear any selected annotation
+    });
+    HapticFeedback.selectionClick();
+  }
+  
+  // Deactivate current tool
+  void _deactivateTool() {
+    setState(() {
+      _isToolActive = false;
+      _showAnnotationToolbar = false;
+    });
+  }
+  
+  // Close all overlays and minimize controls (one tool at a time)
+  void _closeAllOverlays() {
+    setState(() {
+      _showAnnotationToolbar = false;
+      _showSearchOverlay = false;
+      _showBookmarkPanel = false;
+      _showNotesPanel = false;
+      _isToolActive = false;
+      _selectedAnnotationId = null;
+    });
+  }
+  
+  // Minimize all UI controls but keep current mode active
+  void _minimizeAllControls() {
+    setState(() {
+      _showFloatingNavbar = false;
+      _showZoomControls = false;
+      _showAnnotationToolbar = false;
+      _showSearchOverlay = false;
+      _showBookmarkPanel = false;
+      _showNotesPanel = false;
+      _selectedAnnotationId = null;
+      _annotationCommentPosition = null;
+    });
+  }
+  
+  // Navigate to annotation and show its comment popup
+  void _navigateToAnnotation(String annotationId) {
+    final annotation = _annotations.where((a) => a.id == annotationId).firstOrNull;
+    if (annotation == null) return;
+    
+    // Navigate to page
+    _handlePageNavigation(annotation.pageNumber);
+    
+    // Select annotation - position will be calculated when page renders
+    setState(() {
+      _selectedAnnotationId = annotationId;
+      // Set initial position, will be updated based on annotation bounds
+      if (annotation.points.isNotEmpty) {
+        // Use normalized position scaled to approximate widget size
+        final firstPoint = annotation.points.first;
+        _annotationCommentPosition = Offset(
+          firstPoint.dx * 300, // Approximate page width
+          (firstPoint.dy * 500) - 50, // Approximate page height, offset upward
+        );
+      } else {
+        _annotationCommentPosition = const Offset(50, 100);
+      }
+    });
+    
+    HapticFeedback.selectionClick();
+  }
+  
+  // Enable pan mode
+  void _enablePanMode() {
+    setState(() {
+      _isPanMode = true;
+      _isToolActive = false;
+      _showFloatingNavbar = false;
+      _showZoomControls = false;
+      _showAnnotationToolbar = false;
+    });
+    HapticFeedback.lightImpact();
+  }
+  
+  // Show quick note dialog - can be linked to an annotation
+  void _showQuickNoteDialog({String? annotationId}) {
+    PdfQuickNoteBubble.showAsDialog(
+      context: context,
+      initialNote: '',
+      onSave: (note) {
+        if (note.isNotEmpty) {
+          // Store the note
+          final noteData = {
+            'id': DateTime.now().millisecondsSinceEpoch,
+            'note': note,
+            'page': _currentPage,
+            'timestamp': DateTime.now().toIso8601String(),
+            'annotationId': annotationId, // Link to annotation if provided
+          };
+          setState(() {
+            _quickNotes.add(noteData);
+          });
+          
+          // If linked to an annotation, also update the annotation's linkedNote
+          if (annotationId != null) {
+            final index = _annotations.indexWhere((a) => a.id == annotationId);
+            if (index != -1) {
+              setState(() {
+                _annotations[index] = _annotations[index].copyWith(
+                  linkedNote: note,
+                );
+              });
+            }
+          }
+          
+          print('📝 Note saved: $note${annotationId != null ? ' (linked to annotation $annotationId)' : ''}');
+        }
+      },
+      onDelete: () {
+        // Nothing to delete for new notes
+      },
+    );
+  }
+  
+  // Show note dialog for an existing annotation
+  void _showAnnotationNoteDialog(PdfAnnotation annotation) {
+    PdfQuickNoteBubble.showAsDialog(
+      context: context,
+      initialNote: annotation.linkedNote ?? '',
+      onSave: (note) {
+        if (note.isNotEmpty) {
+          // Update the annotation's linked note
+          final index = _annotations.indexWhere((a) => a.id == annotation.id);
+          if (index != -1) {
+            setState(() {
+              _annotations[index] = _annotations[index].copyWith(
+                linkedNote: note,
+              );
+            });
+            
+            // Also add to quick notes list if not already there
+            final existingNoteIndex = _quickNotes.indexWhere(
+              (n) => n['annotationId'] == annotation.id
+            );
+            if (existingNoteIndex == -1) {
+              _quickNotes.add({
+                'id': DateTime.now().millisecondsSinceEpoch,
+                'note': note,
+                'page': annotation.pageNumber,
+                'timestamp': DateTime.now().toIso8601String(),
+                'annotationId': annotation.id,
+              });
+            } else {
+              _quickNotes[existingNoteIndex]['note'] = note;
+              _quickNotes[existingNoteIndex]['timestamp'] = DateTime.now().toIso8601String();
+            }
+          }
+          print('📝 Note updated for annotation ${annotation.id}: $note');
+        }
+      },
+      onDelete: () {
+        // Remove the note from annotation
+        final index = _annotations.indexWhere((a) => a.id == annotation.id);
+        if (index != -1) {
+          setState(() {
+            _annotations[index] = _annotations[index].copyWith(
+              linkedNote: null,
+            );
+          });
+          // Remove from quick notes list
+          _quickNotes.removeWhere((n) => n['annotationId'] == annotation.id);
+          print('🗑️ Note deleted for annotation ${annotation.id}');
+        }
+      },
+    );
+  }
+  
+  // Build compact annotation comment popup (modern minimal design)
+  Widget _buildAnnotationCommentPopup(PdfAnnotation annotation) {
+    final hasNote = annotation.linkedNote != null && annotation.linkedNote!.isNotEmpty;
+    
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: BoxConstraints(maxWidth: 42.w, minWidth: 25.w),
+        decoration: BoxDecoration(
+          color: _isDarkMode 
+              ? AppTheme.surfaceColor.withValues(alpha: 0.95)
+              : Colors.white.withValues(alpha: 0.98),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Compact header
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 2.5.w, vertical: 0.6.h),
+              decoration: BoxDecoration(
+                color: annotation.color.withValues(alpha: 0.15),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: annotation.color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  SizedBox(width: 1.5.w),
+                  Text(
+                    _getAnnotationTypeName(annotation.type),
+                    style: AppTheme.dataTextStyle(
+                      fontSize: 9.sp,
+                      fontWeight: FontWeight.w600,
+                      color: _isDarkMode ? AppTheme.textPrimary : Colors.black87,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedAnnotationId = null;
+                        _annotationCommentPosition = null;
+                      });
+                    },
+                    child: Padding(
+                      padding: EdgeInsets.all(0.5.w),
+                      child: CustomIconWidget(
+                        iconName: 'close',
+                        color: _isDarkMode ? AppTheme.textSecondary : Colors.black45,
+                        size: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Compact note content or add note button
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
+              child: hasNote
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            annotation.linkedNote!,
+                            style: AppTheme.dataTextStyle(
+                              fontSize: 9.sp,
+                              color: _isDarkMode ? AppTheme.textPrimary : Colors.black87,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        SizedBox(width: 1.5.w),
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedAnnotationId = null;
+                              _annotationCommentPosition = null;
+                            });
+                            _showAnnotationNoteDialog(annotation);
+                          },
+                          child: Container(
+                            padding: EdgeInsets.all(1.w),
+                            decoration: BoxDecoration(
+                              color: AppTheme.accentColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: CustomIconWidget(
+                              iconName: 'edit',
+                              color: AppTheme.accentColor,
+                              size: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  : GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedAnnotationId = null;
+                          _annotationCommentPosition = null;
+                        });
+                        _showAnnotationNoteDialog(annotation);
+                      },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CustomIconWidget(
+                            iconName: 'add',
+                            color: AppTheme.accentColor,
+                            size: 14,
+                          ),
+                          SizedBox(width: 1.w),
+                          Text(
+                            'Add note',
+                            style: AppTheme.dataTextStyle(
+                              fontSize: 9.sp,
+                              color: AppTheme.accentColor,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  String _getAnnotationIcon(AnnotationType type) {
+    switch (type) {
+      case AnnotationType.highlight:
+      case AnnotationType.textHighlight:
+        return 'highlight';
+      case AnnotationType.underline:
+        return 'format_underlined';
+      case AnnotationType.drawing:
+        return 'draw';
+      case AnnotationType.text:
+        return 'text_fields';
+      case AnnotationType.eraser:
+        return 'auto_fix_off';
+    }
+  }
+  
+  String _getAnnotationTypeName(AnnotationType type) {
+    switch (type) {
+      case AnnotationType.highlight:
+        return 'Highlight';
+      case AnnotationType.textHighlight:
+        return 'Text Highlight';
+      case AnnotationType.underline:
+        return 'Underline';
+      case AnnotationType.drawing:
+        return 'Drawing';
+      case AnnotationType.text:
+        return 'Text';
+      case AnnotationType.eraser:
+        return 'Eraser';
+    }
+  }
+  
+  // Get short tool name for indicator
+  String _getToolName(AnnotationType? tool) {
+    if (tool == null) return 'None';
+    switch (tool) {
+      case AnnotationType.highlight:
+        return 'Highlight';
+      case AnnotationType.textHighlight:
+        return 'Text HL';
+      case AnnotationType.underline:
+        return 'Underline';
+      case AnnotationType.drawing:
+        return 'Draw';
+      case AnnotationType.text:
+        return 'Text';
+      case AnnotationType.eraser:
+        return 'Eraser';
     }
   }
 
   void _handlePageNavigation(int page) {
     if (_totalPages == 0) return;
-    _pdfViewerController.jumpToPage(page);
-    HapticFeedback.lightImpact();
+    // Clamp page to valid range
+    final targetPage = page.clamp(1, _totalPages);
+    if (targetPage == _currentPage) return;
+    
+    try {
+      if (_pdfViewerController.isReady) {
+        _pdfViewerController.goToPage(pageNumber: targetPage);
+        HapticFeedback.lightImpact();
+      }
+    } catch (e) {
+      print('❌ Page navigation error: $e');
+    }
+  }
+  
+  // Erase annotations at a given point
+  void _eraseAtPoint(Offset point, int pageNumber, Size pageSize) {
+    // Convert eraser position to normalized coordinates
+    final normalizedPoint = PdfAnnotation.toNormalizedPoint(point, pageSize);
+    // Normalize eraser radius relative to page size (use average of width/height)
+    final normalizedRadius = 20.0 / ((pageSize.width + pageSize.height) / 2);
+    
+    setState(() {
+      _annotations.removeWhere((annotation) {
+        if (annotation.pageNumber != pageNumber) return false;
+        
+        // Check if any normalized point of the annotation is within eraser radius
+        for (final p in annotation.points) {
+          if ((p - normalizedPoint).distance < normalizedRadius) {
+            return true;
+          }
+        }
+        return false;
+      });
+    });
   }
 
   void _handleZoomChange(double zoom) {
@@ -122,78 +932,44 @@ class _PdfReaderState extends State<PdfReader> {
     setState(() {
       _zoomLevel = newZoom;
     });
-    _pdfViewerController.zoomLevel = newZoom;
-  }
-
-  void _toggleAutoScroll() {
-    setState(() {
-      _isAutoScrolling = !_isAutoScrolling;
-    });
-    HapticFeedback.lightImpact();
-  }
-
-  void _handleAutoScrollSpeedChange(double speed) {
-    setState(() {
-      _autoScrollSpeed = speed;
-    });
-  }
-
-  void _toggleTextReflow() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Text reflow is not supported for PDF files')),
-    );
-    HapticFeedback.mediumImpact();
+    _pdfViewerController.setZoom(_pdfViewerController.centerPosition, newZoom);
   }
 
   void _handleSearch(String query) {
     setState(() {
       _searchQuery = query;
-      if (query.isNotEmpty) {
-        // Mock search results
-        _totalSearchMatches = 23;
-        _currentSearchMatch = 1;
-      } else {
+    });
+    
+    if (query.isNotEmpty && _textSearcher != null) {
+      _textSearcher!.startTextSearch(query, caseInsensitive: true);
+    } else {
+      setState(() {
         _totalSearchMatches = 0;
         _currentSearchMatch = 0;
-      }
-    });
-  }
-
-  void _navigateSearchMatch(bool next) {
-    if (_totalSearchMatches > 0) {
-      setState(() {
-        if (next) {
-          _currentSearchMatch = (_currentSearchMatch % _totalSearchMatches) + 1;
-        } else {
-          _currentSearchMatch = _currentSearchMatch > 1 
-              ? _currentSearchMatch - 1 
-              : _totalSearchMatches;
-        }
       });
+      _textSearcher?.resetTextSearch();
     }
   }
 
-  void _toggleTTS() {
-    setState(() {
-      _showTTSPlayer = !_showTTSPlayer;
-      if (_showTTSPlayer) {
-        _currentSentence = _selectedText.isNotEmpty 
-            ? _selectedText 
-            : 'Machine learning is a subset of artificial intelligence that focuses on algorithms and statistical models.';
+  void _navigateSearchMatch(bool next) {
+    if (_totalSearchMatches > 0 && _textSearcher != null) {
+      if (next) {
+        _textSearcher!.goToNextMatch();
+        setState(() {
+          _currentSearchMatch = (_textSearcher!.currentIndex ?? 0) + 1;
+        });
+      } else {
+        _textSearcher!.goToPrevMatch();
+        setState(() {
+          _currentSearchMatch = (_textSearcher!.currentIndex ?? 0) + 1;
+        });
       }
-    });
+    }
   }
-
-  void _handleTTSPlayPause() {
+  
+  void _toggleDarkMode() {
     setState(() {
-      _isTTSPlaying = !_isTTSPlaying;
-      _isTTSPaused = !_isTTSPlaying;
-    });
-  }
-
-  void _handleTTSSpeedChange(double speed) {
-    setState(() {
-      _ttsPlaybackSpeed = speed;
+      _isDarkMode = !_isDarkMode;
     });
   }
 
@@ -261,11 +1037,12 @@ class _PdfReaderState extends State<PdfReader> {
         children: [
           // PDF Content Area
           GestureDetector(
-            onTap: _toggleControls,
-            onDoubleTap: () {
+            // Only toggle controls when no tool is active
+            onTap: _isToolActive ? null : _toggleControls,
+            onDoubleTap: _isToolActive ? null : () {
               _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
             },
-            onLongPress: () {
+            onLongPress: _isToolActive ? null : () {
               final RenderBox renderBox = context.findRenderObject() as RenderBox;
               final position = renderBox.globalToLocal(
                 Offset(50.w, 30.h),
@@ -288,67 +1065,129 @@ class _PdfReaderState extends State<PdfReader> {
                 child: _buildTopOverlay(),
               ),
             
-            // Quick note bubbles
-            ..._quickNotes.map((note) {
-              return PdfQuickNoteBubble(
-                position: note['position'] as Offset,
-                note: note['note'] as String,
-                isEditing: note['isEditing'] as bool,
-                onNoteChanged: (newNote) => _updateQuickNote(note['id'] as int, newNote),
-                onSave: () => _updateQuickNote(note['id'] as int, note['note'] as String),
-                onDelete: () => _deleteQuickNote(note['id'] as int),
-                onClose: () => _deleteQuickNote(note['id'] as int),
-              );
-            }).toList(),
-            
             // Annotation toolbar
             if (_showAnnotationToolbar)
               Positioned(
-                bottom: 25.h,
+                bottom: 18.h,
                 left: 0,
                 right: 0,
                 child: PdfAnnotationToolbar(
-                  selectedText: _selectedText,
-                  onHighlight: () {
-                    setState(() => _showAnnotationToolbar = false);
-                    HapticFeedback.lightImpact();
+                  selectedText: _isToolActive ? (_currentTool == AnnotationType.eraser ? 'Tap annotations to erase' : 'Drag to annotate') : _selectedText,
+                  selectedColor: _selectedAnnotationColor,
+                  activeTool: _currentTool,
+                  useTextHighlight: _useTextHighlight,
+                  onHighlightModeChanged: (useText) {
+                    setState(() {
+                      _useTextHighlight = useText;
+                    });
                   },
-                  onUnderline: () {
-                    setState(() => _showAnnotationToolbar = false);
-                    HapticFeedback.lightImpact();
+                  onColorChanged: (color) {
+                    setState(() {
+                      _selectedAnnotationColor = color;
+                    });
+                    // Update current annotation color if one is being created
+                    if (_currentAnnotationId != null) {
+                      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+                      if (index != -1) {
+                        _annotations[index] = _annotations[index].copyWith(
+                          color: _currentTool == AnnotationType.highlight 
+                              ? color.withValues(alpha: 0.4) 
+                              : color,
+                        );
+                      }
+                    }
                   },
-                  onDraw: () {
-                    setState(() => _showAnnotationToolbar = false);
-                    Navigator.pushNamed(context, '/annotation-tools');
-                  },
+                  onHighlight: () => _selectTool(AnnotationType.highlight),
+                  onTextHighlight: () => _selectTool(AnnotationType.textHighlight),
+                  onUnderline: () => _selectTool(AnnotationType.underline),
+                  onDraw: () => _selectTool(AnnotationType.drawing),
+                  onEraser: () => _selectTool(AnnotationType.eraser),
                   onNote: () {
-                    setState(() => _showAnnotationToolbar = false);
-                    final position = Offset(50.w, 40.h);
-                    _addQuickNote(position);
+                    _closeAllOverlays();
+                    _showQuickNoteDialog();
                   },
-                  onClose: () => setState(() => _showAnnotationToolbar = false),
+                  onClose: () {
+                    _deactivateTool();
+                    setState(() => _showAnnotationToolbar = false);
+                    // Clear any text selection
+                    try {
+                      _pdfViewerController.textSelectionDelegate.clearTextSelection();
+                    } catch (_) {}
+                  },
                 ),
               ),
             
-            // Floating controls
-            PdfFloatingControls(
-              isVisible: _showControls,
-              currentPage: _currentPage,
-              totalPages: _totalPages,
-              zoomLevel: _zoomLevel,
-              isAutoScrolling: _isAutoScrolling,
-              autoScrollSpeed: _autoScrollSpeed,
-              isTextReflowMode: _isTextReflowMode,
-              onBookmarkTap: () => setState(() => _showBookmarkPanel = true),
-              onSearchTap: () => setState(() => _showSearchOverlay = true),
-              onAnnotationTap: () => Navigator.pushNamed(context, '/annotation-tools'),
-              onTTSTap: _toggleTTS,
-              onSettingsTap: () => Navigator.pushNamed(context, '/settings'),
-              onAutoScrollToggle: _toggleAutoScroll,
-              onAutoScrollSpeedChanged: _handleAutoScrollSpeedChange,
-              onTextReflowToggle: _toggleTextReflow,
-              onZoomChanged: _handleZoomChange,
-            ),
+            // Floating tool indicator (when tool is active but toolbar is hidden)
+            if (_isToolActive && !_showAnnotationToolbar)
+              Positioned(
+                bottom: 3.h,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _showAnnotationToolbar = true;
+                      });
+                      HapticFeedback.lightImpact();
+                    },
+                    onLongPress: () {
+                      // Long press to deactivate tool
+                      _deactivateTool();
+                      HapticFeedback.mediumImpact();
+                    },
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 0.8.h),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceColor.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                        border: Border.all(
+                          color: AppTheme.accentColor.withValues(alpha: 0.5),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: _selectedAnnotationColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          SizedBox(width: 1.5.w),
+                          Text(
+                            _getToolName(_currentTool),
+                            style: AppTheme.dataTextStyle(
+                              fontSize: 9.sp,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textPrimary,
+                            ),
+                          ),
+                          SizedBox(width: 1.w),
+                          CustomIconWidget(
+                            iconName: 'expand_less',
+                            color: AppTheme.textSecondary,
+                            size: 14,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            
+            // Responsive floating navbar with pencil toggle button
+            _buildResponsiveFloatingNavbar(),
             
             // Search overlay
             PdfSearchOverlay(
@@ -360,25 +1199,6 @@ class _PdfReaderState extends State<PdfReader> {
               onPreviousMatch: () => _navigateSearchMatch(false),
               onNextMatch: () => _navigateSearchMatch(true),
               onClose: () => setState(() => _showSearchOverlay = false),
-            ),
-            
-            // TTS Player
-            PdfTtsPlayer(
-              isVisible: _showTTSPlayer,
-              isPlaying: _isTTSPlaying,
-              isPaused: _isTTSPaused,
-              progress: _ttsProgress,
-              currentSentence: _currentSentence,
-              playbackSpeed: _ttsPlaybackSpeed,
-              onPlayPause: _handleTTSPlayPause,
-              onStop: () => setState(() {
-                _isTTSPlaying = false;
-                _ttsProgress = 0.0;
-              }),
-              onPrevious: () => setState(() => _currentSentence = 'Previous sentence content...'),
-              onNext: () => setState(() => _currentSentence = 'Next sentence content...'),
-              onSpeedChanged: _handleTTSSpeedChange,
-              onClose: () => setState(() => _showTTSPlayer = false),
             ),
             
             // Bookmark panel
@@ -394,8 +1214,701 @@ class _PdfReaderState extends State<PdfReader> {
               onBookmarkDelete: _deleteBookmark,
               onClose: () => setState(() => _showBookmarkPanel = false),
             ),
+            
+            // Notes panel
+            if (_showNotesPanel)
+              _buildNotesPanel(),
           ],
         ),
+    );
+  }
+  
+  // Build notes panel to show saved notes
+  Widget _buildNotesPanel() {
+    return Positioned(
+      top: 12.h,
+      left: 3.w,
+      right: 3.w,
+      bottom: 12.h,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor.withValues(alpha: 0.97),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              blurRadius: 15,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            // Compact Header
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 1.5.h),
+              child: Row(
+                children: [
+                  CustomIconWidget(
+                    iconName: 'note',
+                    color: AppTheme.textPrimary,
+                    size: 20,
+                  ),
+                  SizedBox(width: 2.w),
+                  Expanded(
+                    child: Text(
+                      'Notes (${_quickNotes.length})',
+                      style: AppTheme.darkTheme.textTheme.titleSmall?.copyWith(
+                        color: AppTheme.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      setState(() => _showNotesPanel = false);
+                      HapticFeedback.lightImpact();
+                    },
+                    child: Container(
+                      padding: EdgeInsets.all(1.5.w),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: CustomIconWidget(
+                        iconName: 'close',
+                        color: AppTheme.textPrimary,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Divider
+            Container(
+              height: 1,
+              color: Colors.white.withValues(alpha: 0.1),
+            ),
+            
+            // Notes list
+            Expanded(
+              child: _quickNotes.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CustomIconWidget(
+                            iconName: 'note_add',
+                            color: AppTheme.textSecondary,
+                            size: 40,
+                          ),
+                          SizedBox(height: 1.5.h),
+                          Text(
+                            'No notes yet',
+                            style: AppTheme.darkTheme.textTheme.bodyLarge?.copyWith(
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          SizedBox(height: 1.h),
+                          Text(
+                            'Tap on annotations or use the note tool to add notes',
+                            style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                              color: AppTheme.textSecondary.withValues(alpha: 0.7),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.all(2.w),
+                      itemCount: _quickNotes.length,
+                      itemBuilder: (context, index) {
+                        final note = _quickNotes[index];
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _showNotesPanel = false;
+                            });
+                            // If note has linked annotation, navigate and show comment
+                            if (note['annotationId'] != null) {
+                              _navigateToAnnotation(note['annotationId']);
+                            } else {
+                              // Just navigate to page
+                              _handlePageNavigation(note['page'] ?? 1);
+                            }
+                          },
+                          child: Container(
+                            margin: EdgeInsets.only(bottom: 1.5.w),
+                            padding: EdgeInsets.all(2.w),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      padding: EdgeInsets.symmetric(horizontal: 1.5.w, vertical: 0.3.h),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.accentColor.withValues(alpha: 0.25),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        'P${note['page'] ?? '?'}',
+                                        style: AppTheme.darkTheme.textTheme.labelSmall?.copyWith(
+                                          color: AppTheme.textPrimary,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 9.sp,
+                                        ),
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    GestureDetector(
+                                      onTap: () {
+                                        // Delete note
+                                        setState(() {
+                                          _quickNotes.removeAt(index);
+                                        });
+                                        HapticFeedback.mediumImpact();
+                                      },
+                                      child: CustomIconWidget(
+                                        iconName: 'delete',
+                                        color: AppTheme.errorColor,
+                                        size: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: 0.6.h),
+                                Text(
+                                  note['note'] ?? '',
+                                  style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (note['annotationId'] != null) ...[
+                                  SizedBox(height: 0.3.h),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.accentColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      SizedBox(width: 1.w),
+                                      Text(
+                                        'Linked',
+                                        style: AppTheme.darkTheme.textTheme.labelSmall?.copyWith(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 8.sp,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            
+            // Compact add note button
+            Padding(
+              padding: EdgeInsets.all(2.5.w),
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _showNotesPanel = false);
+                  _showQuickNoteDialog();
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(vertical: 1.h),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentColor,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CustomIconWidget(
+                        iconName: 'add',
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      SizedBox(width: 1.5.w),
+                      Text(
+                        'Add Note',
+                        style: AppTheme.darkTheme.textTheme.labelMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Build floating navbar - matches image design
+  Widget _buildResponsiveFloatingNavbar() {
+    return Stack(
+      children: [
+        // Slide-out zoom controls at top-right
+        Positioned(
+          top: 25.h,
+          right: 0,
+          child: _buildSlideOutZoomControls(),
+        ),
+        
+        // Main horizontal navbar at bottom center
+        if (_showFloatingNavbar)
+          Positioned(
+            bottom: 2.h,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 2.5.w, vertical: 0.8.h),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceColor.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.2),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildNavbarButton(
+                      icon: 'bookmark',
+                      isActive: _showBookmarkPanel,
+                      onTap: () {
+                        setState(() {
+                          _showSearchOverlay = false;
+                          _showAnnotationToolbar = false;
+                          _showNotesPanel = false;
+                          _isToolActive = false;
+                          _showBookmarkPanel = !_showBookmarkPanel;
+                        });
+                      },
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: 'note',
+                      isActive: _showNotesPanel,
+                      onTap: () {
+                        setState(() {
+                          _showSearchOverlay = false;
+                          _showAnnotationToolbar = false;
+                          _showBookmarkPanel = false;
+                          _isToolActive = false;
+                          _showNotesPanel = !_showNotesPanel;
+                        });
+                      },
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: 'search',
+                      isActive: _showSearchOverlay,
+                      onTap: () {
+                        setState(() {
+                          _showBookmarkPanel = false;
+                          _showAnnotationToolbar = false;
+                          _showNotesPanel = false;
+                          _isToolActive = false;
+                          _showSearchOverlay = !_showSearchOverlay;
+                        });
+                      },
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: 'edit',
+                      isActive: _showAnnotationToolbar,
+                      onTap: () {
+                        setState(() {
+                          _showBookmarkPanel = false;
+                          _showSearchOverlay = false;
+                          _showNotesPanel = false;
+                          _showAnnotationToolbar = !_showAnnotationToolbar;
+                          if (_showAnnotationToolbar) {
+                            _currentTool = AnnotationType.drawing;
+                          } else {
+                            _isToolActive = false;
+                          }
+                        });
+                      },
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: _isDarkMode ? 'light_mode' : 'dark_mode',
+                      onTap: _toggleDarkMode,
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: 'chevron_left',
+                      onTap: () => _handlePageNavigation(_currentPage - 1),
+                    ),
+                    SizedBox(width: 1.5.w),
+                    _buildNavbarButton(
+                      icon: 'chevron_right',
+                      onTap: () => _handlePageNavigation(_currentPage + 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        
+        // Compact floating toggle button
+        Positioned(
+          bottom: 11.h,
+          right: 3.w,
+          child: GestureDetector(
+            onTap: () {
+              setState(() {
+                _showFloatingNavbar = !_showFloatingNavbar;
+              });
+              HapticFeedback.lightImpact();
+            },
+            child: Container(
+              padding: EdgeInsets.all(2.8.w),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceColor.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: CustomIconWidget(
+                iconName: _showFloatingNavbar ? 'expand_more' : 'menu',
+                color: AppTheme.textPrimary,
+                size: 20,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  // Build slim slide-out zoom controls (Android-style minimal sidebar)
+  Widget _buildSlideOutZoomControls() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      transform: Matrix4.translationValues(
+        _showZoomControls ? 0 : 48, // Slide off-screen when hidden, keep handle visible
+        0,
+        0,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Visible slide handle - always visible with accent color
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _showZoomControls = !_showZoomControls;
+              });
+              HapticFeedback.lightImpact();
+            },
+            onHorizontalDragEnd: (details) {
+              if (details.primaryVelocity != null) {
+                if (details.primaryVelocity! > 0) {
+                  setState(() => _showZoomControls = false);
+                } else {
+                  setState(() => _showZoomControls = true);
+                }
+              }
+            },
+            child: Container(
+              width: 6,
+              height: 50,
+              margin: const EdgeInsets.only(right: 1),
+              decoration: BoxDecoration(
+                color: _showZoomControls 
+                    ? AppTheme.accentColor.withValues(alpha: 0.7)
+                    : AppTheme.accentColor.withValues(alpha: 0.9),
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(6)),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.accentColor.withValues(alpha: 0.3),
+                    blurRadius: 4,
+                    offset: const Offset(-1, 0),
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Container(
+                  width: 2,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Compact zoom controls panel
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceColor.withValues(alpha: 0.92),
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 6,
+                  offset: const Offset(-1, 0),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Pan/cursor mode button
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    _enablePanMode();
+                  },
+                  child: Container(
+                    padding: EdgeInsets.all(1.8.w),
+                    decoration: BoxDecoration(
+                      color: _isPanMode ? AppTheme.accentColor.withValues(alpha: 0.25) : Colors.transparent,
+                      borderRadius: const BorderRadius.only(topLeft: Radius.circular(11)),
+                    ),
+                    child: CustomIconWidget(
+                      iconName: 'pan_tool',
+                      color: _isPanMode ? AppTheme.accentColor : AppTheme.textPrimary,
+                      size: 18,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    _handleZoomChange((_zoomLevel + 0.25).clamp(0.5, 4.0));
+                  },
+                  child: Container(
+                    padding: EdgeInsets.all(1.8.w),
+                    child: CustomIconWidget(
+                      iconName: 'add',
+                      color: AppTheme.textPrimary,
+                      size: 16,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 1.5.w, vertical: 0.3.h),
+                  child: Text(
+                    '${(_zoomLevel * 100).round()}',
+                    style: AppTheme.dataTextStyle(
+                      fontSize: 8.sp,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    _handleZoomChange((_zoomLevel - 0.25).clamp(0.5, 4.0));
+                  },
+                  child: Container(
+                    padding: EdgeInsets.all(1.8.w),
+                    decoration: const BoxDecoration(
+                      borderRadius: BorderRadius.only(bottomLeft: Radius.circular(11)),
+                    ),
+                    child: CustomIconWidget(
+                      iconName: 'remove',
+                      color: AppTheme.textPrimary,
+                      size: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Legacy zoom controls (kept for reference)
+  Widget _buildZoomControls() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.accentColor.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Pan/cursor mode button
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              _enablePanMode();
+            },
+            child: Container(
+              padding: EdgeInsets.all(2.w),
+              decoration: BoxDecoration(
+                color: _isPanMode ? AppTheme.accentColor.withValues(alpha: 0.3) : Colors.transparent,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+              ),
+              child: CustomIconWidget(
+                iconName: 'pan_tool',
+                color: _isPanMode ? AppTheme.accentColor : AppTheme.textPrimary,
+                size: 20,
+              ),
+            ),
+          ),
+          Container(
+            width: 30,
+            height: 1,
+            color: AppTheme.textSecondary.withValues(alpha: 0.3),
+          ),
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              _handleZoomChange((_zoomLevel + 0.25).clamp(0.5, 4.0));
+            },
+            child: Container(
+              padding: EdgeInsets.all(2.w),
+              child: CustomIconWidget(
+                iconName: 'zoom_in',
+                color: AppTheme.textPrimary,
+                size: 20,
+              ),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 20,
+            color: AppTheme.textSecondary.withValues(alpha: 0.3),
+          ),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 2.w, vertical: 1.h),
+            child: Text(
+              '${(_zoomLevel * 100).round()}%',
+              style: AppTheme.dataTextStyle(
+                fontSize: 10.sp,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 20,
+            color: AppTheme.textSecondary.withValues(alpha: 0.3),
+          ),
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              _handleZoomChange((_zoomLevel - 0.25).clamp(0.5, 4.0));
+            },
+            child: Container(
+              padding: EdgeInsets.all(2.w),
+              child: CustomIconWidget(
+                iconName: 'zoom_out',
+                color: AppTheme.textPrimary,
+                size: 20,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Build floating action button (for zoom controls)
+  Widget _buildFloatingButton({
+    required String icon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        onTap();
+        HapticFeedback.lightImpact();
+      },
+      child: Container(
+        padding: EdgeInsets.all(2.5.w),
+        decoration: BoxDecoration(
+          gradient: AppTheme.gradientDecoration().gradient,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.accentColor.withValues(alpha: 0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: CustomIconWidget(
+          iconName: icon,
+          color: AppTheme.textPrimary,
+          size: 20,
+        ),
+      ),
+    );
+  }
+  
+  // Build individual navbar button (compact design)
+  Widget _buildNavbarButton({
+    required String icon,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        onTap();
+        HapticFeedback.lightImpact();
+      },
+      child: Container(
+        padding: EdgeInsets.all(2.w),
+        decoration: BoxDecoration(
+          color: isActive 
+              ? AppTheme.accentColor.withValues(alpha: 0.25)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: CustomIconWidget(
+          iconName: icon,
+          color: isActive ? AppTheme.accentColor : AppTheme.textPrimary,
+          size: 18,
+        ),
+      ),
     );
   }
 
@@ -479,49 +1992,686 @@ class _PdfReaderState extends State<PdfReader> {
   }
 
   Widget _buildPdfContent() {
-    if (_document == null) {
-      return const Center(child: Text('No document loaded'));
-    }
-
-    if (_isTextReflowMode) {
-       return const Center(child: Text('Text reflow not supported for this document'));
-    }
-
-    final isNetworkUrl = _document!.filePath.startsWith('http') || _document!.filePath.startsWith('https');
-
-    if (isNetworkUrl) {
-      return SfPdfViewer.network(
-        _document!.filePath,
-        controller: _pdfViewerController,
-        onPageChanged: (PdfPageChangedDetails details) {
-          setState(() {
-            _currentPage = details.newPageNumber;
-          });
-        },
-        onDocumentLoaded: (PdfDocumentLoadedDetails details) {
-          setState(() {
-             _totalPages = details.document.pages.count;
-          });
-        },
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Downloading PDF...'),
+          ],
+        ),
       );
-    } else if (!kIsWeb) {
-      return SfPdfViewer.file(
-        File(_document!.filePath),
-        controller: _pdfViewerController,
-        onPageChanged: (PdfPageChangedDetails details) {
-          setState(() {
-            _currentPage = details.newPageNumber;
-          });
-        },
-        onDocumentLoaded: (PdfDocumentLoadedDetails details) {
-          setState(() {
-             _totalPages = details.document.pages.count;
-          });
-        },
-      );
-    } else {
-      return const Center(child: Text('Local file access is not supported on Web'));
     }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                _errorMessage!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _loadPdf,
+                child: const Text('Retry'),
+              ),
+              if (kIsWeb && _document != null) ...[
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: () {
+                    html.window.open(_document!.filePath, '_blank');
+                  },
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open in New Tab'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_pdfBytes != null) {
+      Widget viewer = PdfViewer.data(
+        _pdfBytes!,
+        sourceName: _document?.title ?? 'document.pdf',
+        controller: _pdfViewerController,
+          params: PdfViewerParams(
+          panEnabled: _isPanMode || !_isToolActive, // Enable pan in pan mode or when no tool active
+          scaleEnabled: _isPanMode || !_isToolActive, // Enable scale in pan mode or when no tool active
+          textSelectionParams: PdfTextSelectionParams(
+            enabled: !_isToolActive && !_isPanMode,
+            onTextSelectionChange: (selection) {
+              print('🔍 Text selection callback triggered!');
+              _handleTextSelectionChange(selection);
+            },
+          ),
+          onGeneralTap: (context, controller, details) {
+            print('👆 General tap: ${details.type} at ${details.localPosition}');
+            return false; // Don't consume the event
+          },
+          pageOverlaysBuilder: (context, pageRect, page) {
+            return [_buildPageOverlay(context, pageRect, page)];
+          },
+          onViewerReady: (document, controller) {
+            print('✅ PDF Loaded. Pages: ${document.pages.length}');
+            setState(() {
+               _totalPages = document.pages.length;
+            });
+            
+            // Initialize searcher after a frame to ensure controller is ready
+            Future.microtask(() {
+              if (mounted && controller.isReady) {
+                try {
+                  _textSearcher = PdfTextSearcher(controller)..addListener(() {
+                    if (mounted) {
+                      setState(() {
+                        _totalSearchMatches = _textSearcher!.matches.length;
+                        _currentSearchMatch = (_textSearcher!.currentIndex ?? -1) + 1;
+                      });
+                    }
+                  });
+                } catch (e) {
+                  print('❌ Failed to initialize PdfTextSearcher: $e');
+                }
+              }
+            });
+          },
+          onPageChanged: (pageNumber) {
+            setState(() {
+              _currentPage = pageNumber ?? 1;
+            });
+          },
+          errorBannerBuilder: (context, error, stackTrace, documentRef) {
+             print('❌ PDF Load Failed: $error');
+             return Center(
+               child: Text('Error opening PDF: $error'),
+             );
+          },
+        ),
+      );
+
+      if (_isDarkMode) {
+        viewer = ColorFiltered(
+          colorFilter: const ColorFilter.mode(
+            Colors.white,
+            BlendMode.difference,
+          ),
+          child: viewer,
+        );
+      }
+      
+      return viewer;
+    }
+
+    return const Center(child: Text('No document loaded'));
+  }
+
+  Widget _buildPageOverlay(BuildContext context, Rect pageRect, PdfPage page) {
+    final pageAnnotations = _annotations.where((a) => a.pageNumber == page.pageNumber).toList();
+    
+    // Find selected annotation for this page
+    final selectedAnnotation = _selectedAnnotationId != null
+        ? pageAnnotations.where((a) => a.id == _selectedAnnotationId).firstOrNull
+        : null;
+    
+    return Stack(
+      children: [
+        // Render existing annotations with tap-to-select support in pan mode
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+            return GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTapUp: _isToolActive ? null : (details) {
+                // Only handle taps when no tool is active
+                final tapPos = details.localPosition;
+                final normalizedTapPos = PdfAnnotation.toNormalizedPoint(tapPos, pageSize);
+                final hitRadius = 0.03; // 3% of page size for easier tapping
+                
+                // In pan mode, check for annotation taps
+                if (_isPanMode) {
+                  for (final annotation in pageAnnotations) {
+                    // Check if any point is near the tap
+                    for (final point in annotation.points) {
+                      if ((point - normalizedTapPos).distance < hitRadius) {
+                        // Found annotation - select it and show comment
+                        final scaledPoint = PdfAnnotation.toWidgetPoint(point, pageSize);
+                        setState(() {
+                          _selectedAnnotationId = annotation.id;
+                          _annotationCommentPosition = Offset(
+                            scaledPoint.dx,
+                            scaledPoint.dy - 50, // Position above the annotation
+                          );
+                        });
+                        HapticFeedback.selectionClick();
+                        return;
+                      }
+                    }
+                  }
+                  
+                  // Tapped empty area in pan mode - just clear selection
+                  if (_selectedAnnotationId != null) {
+                    setState(() {
+                      _selectedAnnotationId = null;
+                      _annotationCommentPosition = null;
+                    });
+                  }
+                }
+              },
+              child: CustomPaint(
+                size: pageRect.size,
+                painter: AnnotationPainter(
+                  annotations: pageAnnotations, 
+                  scale: 1.0, 
+                  page: page, 
+                  pageRect: pageRect,
+                  selectedAnnotationId: _selectedAnnotationId,
+                ),
+              ),
+            );
+          },
+        ),
+        
+        // Show comment popup for selected annotation
+        if (selectedAnnotation != null && _annotationCommentPosition != null)
+          Positioned(
+            left: _annotationCommentPosition!.dx.clamp(10, pageRect.width - 200),
+            top: _annotationCommentPosition!.dy.clamp(10, pageRect.height - 100),
+            child: _buildAnnotationCommentPopup(selectedAnnotation),
+          ),
+        
+        // Drawing layer (if drawing tool is active)
+        if (_currentTool == AnnotationType.drawing && _isToolActive)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) {
+                    final localPos = details.localPosition;
+                    final normalizedPos = PdfAnnotation.toNormalizedPoint(localPos, pageSize);
+                    print('🖊️ Draw start at local: $localPos, normalized: $normalizedPos');
+                    setState(() {
+                      _isDrawing = true;
+                      _currentDrawingAnnotationId = DateTime.now().millisecondsSinceEpoch.toString();
+                      _annotations.add(PdfAnnotation(
+                        id: _currentDrawingAnnotationId!,
+                        pageNumber: page.pageNumber,
+                        type: AnnotationType.drawing,
+                        color: _selectedAnnotationColor,
+                        points: [normalizedPos],
+                        textRanges: [],
+                        originalPageSize: pageSize,
+                      ));
+
+                    });
+                  },
+                  onPanUpdate: (details) {
+                    if (_isDrawing && _currentDrawingAnnotationId != null) {
+                      final localPos = details.localPosition;
+                      final normalizedPos = PdfAnnotation.toNormalizedPoint(localPos, pageSize);
+                      final index = _annotations.indexWhere((a) => a.id == _currentDrawingAnnotationId);
+                      if (index != -1) {
+                        setState(() {
+                          _annotations[index] = _annotations[index].copyWith(
+                            points: [..._annotations[index].points, normalizedPos],
+                          );
+                        });
+                      }
+                    }
+                  },
+                  onPanEnd: (details) {
+                    print('🖊️ Draw end');
+                    setState(() {
+                      _isDrawing = false;
+                      _currentDrawingAnnotationId = null;
+                    });
+                    HapticFeedback.lightImpact();
+                  },
+                  child: Container(color: Colors.transparent),
+                );
+              },
+            ),
+          ),
+          
+        // Highlight layer - paint style (continuous stroke as you drag)
+        if (_currentTool == AnnotationType.highlight && _isToolActive)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) {
+                    final localPos = details.localPosition;
+                    final normalizedPos = PdfAnnotation.toNormalizedPoint(localPos, pageSize);
+                    print('📝 Paint-style highlight start at: $localPos, normalized: $normalizedPos');
+                    
+                    // Create annotation with initial point
+                    final id = DateTime.now().millisecondsSinceEpoch.toString();
+                    setState(() {
+                      _isAnnotating = true;
+                      _currentAnnotationId = id;
+                      _annotationStartOffset = localPos;
+                      _annotations.add(PdfAnnotation(
+                        id: id,
+                        pageNumber: page.pageNumber,
+                        type: AnnotationType.highlight,
+                        color: _selectedAnnotationColor.withValues(alpha: 0.4),
+                        points: [normalizedPos],
+                        textRanges: [],
+                        originalPageSize: pageSize,
+                      ));
+                    });
+                  },
+                  onPanUpdate: (details) {
+                    if (_isAnnotating && _currentAnnotationId != null) {
+                      final localPos = details.localPosition;
+                      final normalizedPos = PdfAnnotation.toNormalizedPoint(localPos, pageSize);
+                      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+                      if (index != -1) {
+                        setState(() {
+                          _annotations[index] = _annotations[index].copyWith(
+                            points: [..._annotations[index].points, normalizedPos],
+                          );
+                        });
+                      }
+                    }
+                  },
+                  onPanEnd: (details) {
+                    print('📝 Highlight end');
+                    setState(() {
+                      _isAnnotating = false;
+                      _currentAnnotationId = null;
+                      _annotationStartOffset = null;
+                    });
+                    HapticFeedback.lightImpact();
+                  },
+                  child: Container(color: Colors.transparent),
+                );
+              },
+            ),
+          ),
+          
+        // Text Highlight layer - text detection (like underline but fills text background)
+        if (_currentTool == AnnotationType.textHighlight && _isToolActive)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) async {
+                    final localPos = details.localPosition;
+                    print('📝 Text highlight start at: $localPos');
+                    
+                    // Load page text for detection
+                    await _loadPageText(page.pageNumber);
+                    _detectedTextRects = [];
+                    
+                    // Create annotation
+                    final id = DateTime.now().millisecondsSinceEpoch.toString();
+                    setState(() {
+                      _isAnnotating = true;
+                      _currentAnnotationId = id;
+                      _annotationStartOffset = localPos;
+                      _annotations.add(PdfAnnotation(
+                        id: id,
+                        pageNumber: page.pageNumber,
+                        type: AnnotationType.textHighlight,
+                        color: _selectedAnnotationColor.withValues(alpha: 0.4),
+                        points: [],
+                        textRanges: [],
+                        originalPageSize: pageSize,
+                      ));
+                    });
+                    
+                    // Check for text at start position
+                    _detectTextAtPosition(localPos, page.pageNumber, pageSize);
+                  },
+                  onPanUpdate: (details) {
+                    if (_isAnnotating && _currentAnnotationId != null) {
+                      final localPos = details.localPosition;
+                      _detectTextAtPosition(localPos, page.pageNumber, pageSize);
+                    }
+                  },
+                  onPanEnd: (details) {
+                    print('📝 Text highlight end - detected ${_detectedTextRects.length} text regions');
+                    
+                    // Store detected text rectangles as normalized highlight rectangles
+                    if (_currentAnnotationId != null && _detectedTextRects.isNotEmpty) {
+                      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+                      if (index != -1) {
+                        // Convert detected rects to normalized highlight points (all 4 corners)
+                        final highlightPoints = <Offset>[];
+                        for (final rect in _detectedTextRects) {
+                          // Store all 4 corners of each rect for proper highlighting
+                          highlightPoints.add(PdfAnnotation.toNormalizedPoint(
+                            rect.topLeft, pageSize));
+                          highlightPoints.add(PdfAnnotation.toNormalizedPoint(
+                            rect.topRight, pageSize));
+                          highlightPoints.add(PdfAnnotation.toNormalizedPoint(
+                            rect.bottomRight, pageSize));
+                          highlightPoints.add(PdfAnnotation.toNormalizedPoint(
+                            rect.bottomLeft, pageSize));
+                        }
+                        setState(() {
+                          _annotations[index] = _annotations[index].copyWith(
+                            points: highlightPoints,
+                          );
+                        });
+                      }
+                    }
+                    
+                    setState(() {
+                      _isAnnotating = false;
+                      _currentAnnotationId = null;
+                      _annotationStartOffset = null;
+                      _detectedTextRects = [];
+                    });
+                    HapticFeedback.lightImpact();
+                  },
+                  child: Container(color: Colors.transparent),
+                );
+              },
+            ),
+          ),
+          
+        // Underline layer - text detection (detects text as you drag)
+        if (_currentTool == AnnotationType.underline && _isToolActive)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) async {
+                    final localPos = details.localPosition;
+                    print('📝 Underline start at: $localPos');
+                    
+                    // Load page text for detection
+                    await _loadPageText(page.pageNumber);
+                    _detectedTextRects = [];
+                    
+                    // Create annotation
+                    final id = DateTime.now().millisecondsSinceEpoch.toString();
+                    setState(() {
+                      _isAnnotating = true;
+                      _currentAnnotationId = id;
+                      _annotationStartOffset = localPos;
+                      _annotations.add(PdfAnnotation(
+                        id: id,
+                        pageNumber: page.pageNumber,
+                        type: AnnotationType.underline,
+                        color: _selectedAnnotationColor,
+                        points: [],
+                        textRanges: [],
+                        originalPageSize: pageSize,
+                      ));
+                    });
+                    
+                    // Check for text at start position
+                    _detectTextAtPosition(localPos, page.pageNumber, pageSize);
+                  },
+                  onPanUpdate: (details) {
+                    if (_isAnnotating && _currentAnnotationId != null) {
+                      final localPos = details.localPosition;
+                      _detectTextAtPosition(localPos, page.pageNumber, pageSize);
+                    }
+                  },
+                  onPanEnd: (details) {
+                    print('📝 Underline end - detected ${_detectedTextRects.length} text regions');
+                    
+                    // Store detected text rectangles as normalized underline points
+                    if (_currentAnnotationId != null && _detectedTextRects.isNotEmpty) {
+                      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+                      if (index != -1) {
+                        // Convert detected rects to normalized underline points (bottom edge of each rect)
+                        final underlinePoints = <Offset>[];
+                        for (final rect in _detectedTextRects) {
+                          // Normalize coordinates (0-1 range)
+                          underlinePoints.add(PdfAnnotation.toNormalizedPoint(
+                            Offset(rect.left, rect.bottom + 2), pageSize));
+                          underlinePoints.add(PdfAnnotation.toNormalizedPoint(
+                            Offset(rect.right, rect.bottom + 2), pageSize));
+                        }
+                        setState(() {
+                          _annotations[index] = _annotations[index].copyWith(
+                            points: underlinePoints,
+                          );
+                        });
+                      }
+                    }
+                    
+                    setState(() {
+                      _isAnnotating = false;
+                      _currentAnnotationId = null;
+                      _annotationStartOffset = null;
+                      _detectedTextRects = [];
+                    });
+                    HapticFeedback.lightImpact();
+                  },
+                  child: Container(color: Colors.transparent),
+                );
+              },
+            ),
+          ),
+          
+        // Eraser layer
+        if (_currentTool == AnnotationType.eraser && _isToolActive)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onPanStart: (details) {
+                    _eraseAtPoint(details.localPosition, page.pageNumber, pageSize);
+                  },
+                  onPanUpdate: (details) {
+                    _eraseAtPoint(details.localPosition, page.pageNumber, pageSize);
+                  },
+                  onPanEnd: (details) {
+                    HapticFeedback.lightImpact();
+                  },
+                  child: Container(color: Colors.transparent),
+                );
+              },
+            ),
+          ),
+      ],
+    );
   }
 }
 
+class AnnotationPainter extends CustomPainter {
+  final List<PdfAnnotation> annotations;
+  final double scale;
+  final PdfPage page;
+  final Rect pageRect;
+  final String? selectedAnnotationId;
+
+  AnnotationPainter({
+    required this.annotations,
+    required this.scale,
+    required this.page,
+    required this.pageRect,
+    this.selectedAnnotationId,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final annotation in annotations) {
+      // Get scaled points based on current page size
+      final scaledPoints = annotation.getScaledPoints(size);
+      final isSelected = annotation.id == selectedAnnotationId;
+      
+      final paint = Paint()
+        ..color = annotation.color
+        ..strokeWidth = 2.0
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+
+      if (annotation.type == AnnotationType.drawing && scaledPoints.isNotEmpty) {
+        final path = Path();
+        path.moveTo(scaledPoints.first.dx, scaledPoints.first.dy);
+        for (int i = 1; i < scaledPoints.length; i++) {
+          path.lineTo(scaledPoints[i].dx, scaledPoints[i].dy);
+        }
+        canvas.drawPath(path, paint);
+        
+        // Draw selection indicator
+        if (isSelected) {
+          _drawSelectionIndicator(canvas, scaledPoints);
+        }
+      } else if (annotation.type == AnnotationType.highlight && scaledPoints.isNotEmpty) {
+        // Paint-style highlight - draw thick strokes following drag path
+        // Scale stroke width proportionally to page size
+        final strokeWidth = 20.0 * (size.height / (annotation.originalPageSize?.height ?? size.height));
+        final highlightPaint = Paint()
+          ..color = annotation.color
+          ..strokeWidth = strokeWidth.clamp(10.0, 40.0) // Keep within reasonable bounds
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..style = PaintingStyle.stroke;
+        
+        if (scaledPoints.length >= 2) {
+          final path = Path();
+          path.moveTo(scaledPoints.first.dx, scaledPoints.first.dy);
+          for (int i = 1; i < scaledPoints.length; i++) {
+            path.lineTo(scaledPoints[i].dx, scaledPoints[i].dy);
+          }
+          canvas.drawPath(path, highlightPaint);
+          
+          // Draw selection indicator
+          if (isSelected) {
+            _drawSelectionIndicator(canvas, scaledPoints);
+          }
+        } else if (scaledPoints.length == 1) {
+          // Single point - draw a circle
+          canvas.drawCircle(scaledPoints.first, 10, highlightPaint..style = PaintingStyle.fill);
+        }
+      } else if (annotation.type == AnnotationType.textHighlight && scaledPoints.isNotEmpty) {
+        // Text-detected highlight - draw filled rectangles behind text
+        final textHighlightPaint = Paint()
+          ..color = annotation.color
+          ..style = PaintingStyle.fill;
+        
+        // Points are stored as groups of 4: [topLeft, topRight, bottomRight, bottomLeft] for each text rect
+        if (scaledPoints.length >= 4) {
+          for (int i = 0; i < scaledPoints.length - 3; i += 4) {
+            final topLeft = scaledPoints[i];
+            final topRight = scaledPoints[i + 1];
+            final bottomRight = scaledPoints[i + 2];
+            final bottomLeft = scaledPoints[i + 3];
+            
+            final path = Path()
+              ..moveTo(topLeft.dx, topLeft.dy)
+              ..lineTo(topRight.dx, topRight.dy)
+              ..lineTo(bottomRight.dx, bottomRight.dy)
+              ..lineTo(bottomLeft.dx, bottomLeft.dy)
+              ..close();
+            
+            canvas.drawPath(path, textHighlightPaint);
+          }
+          
+          // Draw selection indicator
+          if (isSelected) {
+            _drawSelectionIndicator(canvas, scaledPoints);
+          }
+        }
+      } else if (annotation.type == AnnotationType.underline && scaledPoints.isNotEmpty) {
+        // Text-detected underline - draw line below each detected text fragment
+        final underlinePaint = Paint()
+          ..color = annotation.color
+          ..strokeWidth = 2.0
+          ..strokeCap = StrokeCap.round
+          ..style = PaintingStyle.stroke;
+        
+        // Points are stored as pairs: [left, right] for each text fragment
+        if (scaledPoints.length >= 2) {
+          for (int i = 0; i < scaledPoints.length - 1; i += 2) {
+            final left = scaledPoints[i];
+            final right = scaledPoints[i + 1];
+            // Draw underline at the Y position (which is already set to bottom of text + offset)
+            canvas.drawLine(left, right, underlinePaint);
+          }
+          
+          // Draw selection indicator
+          if (isSelected) {
+            _drawSelectionIndicator(canvas, scaledPoints);
+          }
+        }
+      }
+    }
+  }
+  
+  void _drawSelectionIndicator(Canvas canvas, List<Offset> points) {
+    if (points.isEmpty) return;
+    
+    // Calculate bounding box
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    
+    for (final point in points) {
+      minX = minX > point.dx ? point.dx : minX;
+      minY = minY > point.dy ? point.dy : minY;
+      maxX = maxX < point.dx ? point.dx : maxX;
+      maxY = maxY < point.dy ? point.dy : maxY;
+    }
+    
+    // Add padding
+    const padding = 4.0;
+    final rect = Rect.fromLTRB(
+      minX - padding,
+      minY - padding,
+      maxX + padding,
+      maxY + padding,
+    );
+    
+    // Draw selection border
+    final selectionPaint = Paint()
+      ..color = const Color(0xFF2196F3)  // Blue selection color
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      selectionPaint,
+    );
+    
+    // Draw corner handles
+    const handleSize = 6.0;
+    final handlePaint = Paint()
+      ..color = const Color(0xFF2196F3)
+      ..style = PaintingStyle.fill;
+    
+    final corners = [
+      Offset(rect.left, rect.top),
+      Offset(rect.right, rect.top),
+      Offset(rect.right, rect.bottom),
+      Offset(rect.left, rect.bottom),
+    ];
+    
+    for (final corner in corners) {
+      canvas.drawCircle(corner, handleSize / 2, handlePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant AnnotationPainter oldDelegate) {
+    return oldDelegate.annotations != annotations ||
+           oldDelegate.selectedAnnotationId != selectedAnnotationId;
+  }
+}

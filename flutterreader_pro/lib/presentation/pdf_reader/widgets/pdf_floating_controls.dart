@@ -9,18 +9,15 @@ class PdfFloatingControls extends StatefulWidget {
   final int currentPage;
   final int totalPages;
   final double zoomLevel;
-  final bool isAutoScrolling;
-  final double autoScrollSpeed;
-  final bool isTextReflowMode;
+  final bool isDarkMode;
   final VoidCallback? onBookmarkTap;
   final VoidCallback? onSearchTap;
   final VoidCallback? onAnnotationTap;
-  final VoidCallback? onTTSTap;
   final VoidCallback? onSettingsTap;
-  final VoidCallback? onAutoScrollToggle;
-  final ValueChanged<double>? onAutoScrollSpeedChanged;
-  final VoidCallback? onTextReflowToggle;
   final ValueChanged<double>? onZoomChanged;
+  final VoidCallback? onNextPage;
+  final VoidCallback? onPreviousPage;
+  final VoidCallback? onDarkModeToggle;
 
   const PdfFloatingControls({
     super.key,
@@ -28,18 +25,15 @@ class PdfFloatingControls extends StatefulWidget {
     required this.currentPage,
     required this.totalPages,
     required this.zoomLevel,
-    this.isAutoScrolling = false,
-    this.autoScrollSpeed = 1.0,
-    this.isTextReflowMode = false,
+    this.isDarkMode = false,
     this.onBookmarkTap,
     this.onSearchTap,
     this.onAnnotationTap,
-    this.onTTSTap,
     this.onSettingsTap,
-    this.onAutoScrollToggle,
-    this.onAutoScrollSpeedChanged,
-    this.onTextReflowToggle,
     this.onZoomChanged,
+    this.onNextPage,
+    this.onPreviousPage,
+    this.onDarkModeToggle,
   });
 
   @override
@@ -52,8 +46,6 @@ class _PdfFloatingControlsState extends State<PdfFloatingControls>
   late AnimationController _slideController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
-
-  bool _showSpeedSlider = false;
 
   @override
   void initState() {
@@ -115,12 +107,6 @@ class _PdfFloatingControlsState extends State<PdfFloatingControls>
     action?.call();
   }
 
-  void _toggleSpeedSlider() {
-    setState(() {
-      _showSpeedSlider = !_showSpeedSlider;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -138,17 +124,6 @@ class _PdfFloatingControlsState extends State<PdfFloatingControls>
             ),
           ),
         ),
-
-        // Auto-scroll speed slider
-        if (_showSpeedSlider)
-          Positioned(
-            bottom: 20.h,
-            right: 4.w,
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: _buildSpeedSlider(),
-            ),
-          ),
 
         // Page indicator
         Positioned(
@@ -207,21 +182,16 @@ class _PdfFloatingControlsState extends State<PdfFloatingControls>
                 onTap: () => _handleControlTap(widget.onAnnotationTap),
               ),
               _buildNavButton(
-                icon: widget.isAutoScrolling ? 'pause' : 'play_arrow',
-                onTap: () {
-                  _handleControlTap(widget.onAutoScrollToggle);
-                  if (widget.isAutoScrolling) {
-                    _toggleSpeedSlider();
-                  }
-                },
+                icon: widget.isDarkMode ? 'light_mode' : 'dark_mode',
+                onTap: () => _handleControlTap(widget.onDarkModeToggle),
               ),
               _buildNavButton(
-                icon: 'record_voice_over',
-                onTap: () => _handleControlTap(widget.onTTSTap),
+                icon: 'arrow_back_ios',
+                onTap: () => _handleControlTap(widget.onPreviousPage),
               ),
               _buildNavButton(
-                icon: widget.isTextReflowMode ? 'view_column' : 'view_stream',
-                onTap: () => _handleControlTap(widget.onTextReflowToggle),
+                icon: 'arrow_forward_ios',
+                onTap: () => _handleControlTap(widget.onNextPage),
               ),
             ],
           ),
@@ -335,90 +305,6 @@ class _PdfFloatingControlsState extends State<PdfFloatingControls>
                 color: AppTheme.textPrimary,
                 size: 20,
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSpeedSlider() {
-    return Container(
-      width: 60.w,
-      padding: EdgeInsets.all(3.w),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.accentColor.withValues(alpha: 0.3),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Auto-scroll Speed',
-                style: AppTheme.darkTheme.textTheme.labelMedium?.copyWith(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              GestureDetector(
-                onTap: _toggleSpeedSlider,
-                child: CustomIconWidget(
-                  iconName: 'close',
-                  color: AppTheme.textSecondary,
-                  size: 16,
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 2.h),
-          Row(
-            children: [
-              CustomIconWidget(
-                iconName: 'slow_motion_video',
-                color: AppTheme.textSecondary,
-                size: 16,
-              ),
-              Expanded(
-                child: Slider(
-                  value: widget.autoScrollSpeed,
-                  min: 0.1,
-                  max: 3.0,
-                  divisions: 29,
-                  activeColor: AppTheme.accentColor,
-                  inactiveColor: AppTheme.textSecondary.withValues(alpha: 0.3),
-                  onChanged: (value) {
-                    HapticFeedback.selectionClick();
-                    widget.onAutoScrollSpeedChanged?.call(value);
-                  },
-                ),
-              ),
-              CustomIconWidget(
-                iconName: 'fast_forward',
-                color: AppTheme.textSecondary,
-                size: 16,
-              ),
-            ],
-          ),
-          Text(
-            '${widget.autoScrollSpeed.toStringAsFixed(1)}x',
-            style: AppTheme.dataTextStyle(
-              fontSize: 12.sp,
-              fontWeight: FontWeight.w500,
-              color: AppTheme.accentColor,
             ),
           ),
         ],

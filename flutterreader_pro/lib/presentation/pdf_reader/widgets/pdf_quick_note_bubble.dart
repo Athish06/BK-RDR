@@ -26,332 +26,254 @@ class PdfQuickNoteBubble extends StatefulWidget {
 
   @override
   State<PdfQuickNoteBubble> createState() => _PdfQuickNoteBubbleState();
+
+  /// Shows the note as a centered dialog
+  static Future<void> showAsDialog({
+    required BuildContext context,
+    required String initialNote,
+    required ValueChanged<String> onSave,
+    required VoidCallback onDelete,
+  }) {
+    return showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (context) => _QuickNoteDialog(
+        initialNote: initialNote,
+        onSave: onSave,
+        onDelete: onDelete,
+      ),
+    );
+  }
 }
 
-class _PdfQuickNoteBubbleState extends State<PdfQuickNoteBubble>
-    with TickerProviderStateMixin {
-  late AnimationController _scaleController;
-  late AnimationController _pulseController;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _pulseAnimation;
+/// Dialog version of quick note - centered and properly dismissible
+class _QuickNoteDialog extends StatefulWidget {
+  final String initialNote;
+  final ValueChanged<String> onSave;
+  final VoidCallback onDelete;
 
-  final TextEditingController _noteController = TextEditingController();
-  final FocusNode _noteFocusNode = FocusNode();
-  bool _isExpanded = false;
+  const _QuickNoteDialog({
+    required this.initialNote,
+    required this.onSave,
+    required this.onDelete,
+  });
+
+  @override
+  State<_QuickNoteDialog> createState() => _QuickNoteDialogState();
+}
+
+class _QuickNoteDialogState extends State<_QuickNoteDialog> {
+  late TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
-    _scaleController = AnimationController(
-      duration: const Duration(milliseconds: 300),
-      vsync: this,
-    );
-    _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
-      vsync: this,
-    );
-
-    _scaleAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _scaleController,
-      curve: Curves.elasticOut,
-    ));
-
-    _pulseAnimation = Tween<double>(
-      begin: 1.0,
-      end: 1.2,
-    ).animate(CurvedAnimation(
-      parent: _pulseController,
-      curve: Curves.easeInOut,
-    ));
-
-    _noteController.text = widget.note;
-    _scaleController.forward();
-
-    if (widget.isEditing) {
-      _expandBubble();
-    } else {
-      _pulseController.repeat(reverse: true);
-    }
-  }
-
-  @override
-  void didUpdateWidget(PdfQuickNoteBubble oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.note != oldWidget.note) {
-      _noteController.text = widget.note;
-    }
-
-    if (widget.isEditing != oldWidget.isEditing) {
-      if (widget.isEditing) {
-        _expandBubble();
-      } else {
-        _collapseBubble();
-      }
-    }
+    _controller = TextEditingController(text: widget.initialNote);
   }
 
   @override
   void dispose() {
-    _scaleController.dispose();
-    _pulseController.dispose();
-    _noteController.dispose();
-    _noteFocusNode.dispose();
+    _controller.dispose();
     super.dispose();
-  }
-
-  void _expandBubble() {
-    setState(() {
-      _isExpanded = true;
-    });
-    _pulseController.stop();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _noteFocusNode.requestFocus();
-    });
-  }
-
-  void _collapseBubble() {
-    setState(() {
-      _isExpanded = false;
-    });
-    _noteFocusNode.unfocus();
-    _pulseController.repeat(reverse: true);
-  }
-
-  void _handleSave() {
-    HapticFeedback.lightImpact();
-    widget.onNoteChanged?.call(_noteController.text);
-    widget.onSave?.call();
-    _collapseBubble();
-  }
-
-  void _handleDelete() {
-    HapticFeedback.lightImpact();
-    widget.onDelete?.call();
-  }
-
-  void _handleTap() {
-    if (!_isExpanded) {
-      HapticFeedback.lightImpact();
-      _expandBubble();
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: widget.position.dx,
-      top: widget.position.dy,
-      child: ScaleTransition(
-        scale: _scaleAnimation,
-        child: GestureDetector(
-          onTap: _handleTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: _isExpanded ? 70.w : 40,
-            constraints: BoxConstraints(
-              minHeight: _isExpanded ? 20.h : 40,
-              maxHeight: _isExpanded ? 40.h : 40,
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.symmetric(horizontal: 5.w, vertical: 10.h),
+      child: Container(
+        width: 80.w,
+        constraints: BoxConstraints(maxHeight: 50.h),
+        decoration: BoxDecoration(
+          gradient: AppTheme.gradientDecoration().gradient,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.accentColor.withValues(alpha: 0.4),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
-            decoration: BoxDecoration(
-              gradient: AppTheme.gradientDecoration().gradient,
-              borderRadius: BorderRadius.circular(_isExpanded ? 16 : 20),
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.accentColor.withValues(alpha: 0.4),
-                  blurRadius: _isExpanded ? 16 : 12,
-                  offset: const Offset(0, 4),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Padding(
+              padding: EdgeInsets.all(3.w),
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(2.w),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: CustomIconWidget(
+                      iconName: 'note',
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  SizedBox(width: 3.w),
+                  Expanded(
+                    child: Text(
+                      'Quick Note',
+                      style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  // Close button
+                  GestureDetector(
+                    onTap: () {
+                      HapticFeedback.lightImpact();
+                      Navigator.of(context).pop();
+                    },
+                    child: Container(
+                      padding: EdgeInsets.all(2.w),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: CustomIconWidget(
+                        iconName: 'close',
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Note input
+            Flexible(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 3.w),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: TextField(
+                    controller: _controller,
+                    autofocus: true,
+                    maxLines: null,
+                    minLines: 4,
+                    style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Type your note here...',
+                      hintStyle: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontStyle: FontStyle.italic,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.all(3.w),
+                    ),
+                  ),
                 ),
-              ],
+              ),
             ),
-            child: _isExpanded ? _buildExpandedNote() : _buildCollapsedNote(),
-          ),
+            
+            SizedBox(height: 2.h),
+            
+            // Action buttons
+            Padding(
+              padding: EdgeInsets.only(left: 3.w, right: 3.w, bottom: 3.w),
+              child: Row(
+                children: [
+                  // Delete button
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        HapticFeedback.mediumImpact();
+                        widget.onDelete();
+                        Navigator.of(context).pop();
+                      },
+                      child: Container(
+                        padding: EdgeInsets.symmetric(vertical: 1.5.h),
+                        decoration: BoxDecoration(
+                          color: AppTheme.errorColor.withValues(alpha: 0.8),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CustomIconWidget(
+                              iconName: 'delete',
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            SizedBox(width: 2.w),
+                            Text(
+                              'Delete',
+                              style: AppTheme.darkTheme.textTheme.labelLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 3.w),
+                  // Save button
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        widget.onSave(_controller.text);
+                        Navigator.of(context).pop();
+                      },
+                      child: Container(
+                        padding: EdgeInsets.symmetric(vertical: 1.5.h),
+                        decoration: BoxDecoration(
+                          color: AppTheme.accentColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CustomIconWidget(
+                              iconName: 'check',
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            SizedBox(width: 2.w),
+                            Text(
+                              'Save',
+                              style: AppTheme.darkTheme.textTheme.labelLarge?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildCollapsedNote() {
-    return AnimatedBuilder(
-      animation: _pulseAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _pulseAnimation.value,
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Center(
-              child: CustomIconWidget(
-                iconName: widget.note.isEmpty ? 'add' : 'note',
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildExpandedNote() {
-    return Container(
-      padding: EdgeInsets.all(3.w),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(1.w),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: CustomIconWidget(
-                  iconName: 'note',
-                  color: Colors.white,
-                  size: 16,
-                ),
-              ),
-              SizedBox(width: 2.w),
-              Expanded(
-                child: Text(
-                  'Quick Note',
-                  style: AppTheme.darkTheme.textTheme.labelMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                onTap: widget.onClose,
-                child: Container(
-                  padding: EdgeInsets.all(1.w),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: CustomIconWidget(
-                    iconName: 'close',
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          SizedBox(height: 2.h),
-
-          // Note input
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: TextField(
-                controller: _noteController,
-                focusNode: _noteFocusNode,
-                maxLines: null,
-                expands: true,
-                textAlignVertical: TextAlignVertical.top,
-                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                  color: Colors.white,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Add your note here...',
-                  hintStyle: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    fontStyle: FontStyle.italic,
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.all(2.w),
-                ),
-                onChanged: widget.onNoteChanged,
-              ),
-            ),
-          ),
-
-          SizedBox(height: 2.h),
-
-          // Action buttons
-          Row(
-            children: [
-              if (widget.note.isNotEmpty)
-                Expanded(
-                  child: GestureDetector(
-                    onTap: _handleDelete,
-                    child: Container(
-                      padding: EdgeInsets.symmetric(vertical: 1.5.h),
-                      decoration: BoxDecoration(
-                        color: AppTheme.errorColor.withValues(alpha: 0.8),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CustomIconWidget(
-                            iconName: 'delete',
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                          SizedBox(width: 1.w),
-                          Text(
-                            'Delete',
-                            style: AppTheme.darkTheme.textTheme.labelSmall
-                                ?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              if (widget.note.isNotEmpty) SizedBox(width: 2.w),
-              Expanded(
-                child: GestureDetector(
-                  onTap: _handleSave,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(vertical: 1.5.h),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CustomIconWidget(
-                          iconName: 'check',
-                          color: Colors.white,
-                          size: 16,
-                        ),
-                        SizedBox(width: 1.w),
-                        Text(
-                          'Save',
-                          style:
-                              AppTheme.darkTheme.textTheme.labelSmall?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+/// Simple state class for keeping the widget interface
+class _PdfQuickNoteBubbleState extends State<PdfQuickNoteBubble> {
+  @override
+  Widget build(BuildContext context) {
+    // This widget is now deprecated in favor of PdfQuickNoteBubble.showAsDialog
+    // Keeping it for backward compatibility - shows nothing
+    return const SizedBox.shrink();
   }
 }
