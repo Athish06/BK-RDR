@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
@@ -39,6 +40,7 @@ class _PdfSearchOverlayState extends State<PdfSearchOverlay>
 
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  Timer? _debounceTimer;
 
   @override
   void initState() {
@@ -103,6 +105,7 @@ class _PdfSearchOverlayState extends State<PdfSearchOverlay>
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _slideController.dispose();
     _fadeController.dispose();
     _searchController.dispose();
@@ -111,6 +114,19 @@ class _PdfSearchOverlayState extends State<PdfSearchOverlay>
   }
 
   void _handleSearchChanged(String query) {
+    // Update UI immediately for responsive typing
+    setState(() {});
+    
+    // Debounce the actual search to avoid lag
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      widget.onSearchChanged?.call(query);
+    });
+  }
+  
+  // Immediate search on submit (Enter key)
+  void _handleSearchSubmit(String query) {
+    _debounceTimer?.cancel();
     widget.onSearchChanged?.call(query);
   }
 
@@ -175,6 +191,8 @@ class _PdfSearchOverlayState extends State<PdfSearchOverlay>
                               controller: _searchController,
                               focusNode: _searchFocusNode,
                               onChanged: _handleSearchChanged,
+                              onSubmitted: _handleSearchSubmit,
+                              textInputAction: TextInputAction.search,
                               style: AppTheme.darkTheme.textTheme.bodyMedium
                                   ?.copyWith(
                                 color: AppTheme.textPrimary,

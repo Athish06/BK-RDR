@@ -4,7 +4,6 @@ import 'package:sizer/sizer.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/app_export.dart';
-import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 
 class HomeDashboard extends StatefulWidget {
@@ -20,6 +19,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
   List<DocumentModel> _continueReadingBooks = [];
   List<DocumentModel> _recentBooks = [];
   bool _isLoading = true;
+  
+  // Reading statistics
+  int _totalBooks = 0;
+  int _completedBooks = 0;
+  int _inProgressBooks = 0;
 
   @override
   void initState() {
@@ -29,32 +33,36 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    final continueReading = await _documentService.getContinueReadingDocuments();
-    final recent = await _documentService.getRecentDocuments();
     
-    if (mounted) {
-      setState(() {
-        _continueReadingBooks = continueReading;
-        _recentBooks = recent;
-        _isLoading = false;
-      });
+    try {
+      final allDocs = await _documentService.getAllDocuments();
+      final continueReading = await _documentService.getContinueReadingDocuments();
+      final recent = await _documentService.getRecentDocuments();
+      
+      if (mounted) {
+        setState(() {
+          _continueReadingBooks = continueReading;
+          _recentBooks = recent;
+          _totalBooks = allDocs.length;
+          _completedBooks = allDocs.where((d) => d.status == 'completed').length;
+          _inProgressBooks = allDocs.where((d) => d.status == 'in_progress').length;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   Future<void> _handleRefresh() async {
     if (_isRefreshing) return;
 
-    setState(() {
-      _isRefreshing = true;
-    });
-
+    setState(() => _isRefreshing = true);
     HapticFeedback.mediumImpact();
     await _loadData();
-
-    setState(() {
-      _isRefreshing = false;
-    });
-
+    setState(() => _isRefreshing = false);
     HapticFeedback.lightImpact();
   }
 
@@ -67,232 +75,208 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  void _showImportOptions() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surfaceColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Padding(
-        padding: EdgeInsets.all(4.w),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 0.5.h,
-              decoration: BoxDecoration(
-                color: AppTheme.textSecondary.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            SizedBox(height: 3.h),
-            Text(
-              'Import PDF',
-              style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            SizedBox(height: 3.h),
-            _buildImportOption(
-              icon: 'folder',
-              title: 'Device Files',
-              subtitle: 'Browse files on your device',
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/pdf-library');
-              },
-            ),
-            _buildImportOption(
-              icon: 'cloud_upload',
-              title: 'Cloud Storage',
-              subtitle: 'Import from Google Drive, Dropbox',
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushNamed(context, '/pdf-library');
-              },
-            ),
-            SizedBox(height: 2.h),
-          ],
-        ),
-      ),
-    );
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
   }
 
-  Widget _buildImportOption({
-    required String icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Container(
-        padding: EdgeInsets.all(3.w),
-        decoration: BoxDecoration(
-          gradient: AppTheme.gradientDecoration().gradient,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: CustomIconWidget(
-          iconName: icon,
-          color: Colors.white,
-          size: 24,
-        ),
-      ),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
-          color: AppTheme.textPrimary,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.textSecondary,
-        ),
-      ),
-      onTap: onTap,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    );
-  }
-
-  Widget _buildGreetingHeader() {
-    return Container(
-      margin: EdgeInsets.all(4.w),
-      padding: EdgeInsets.all(4.w),
-      decoration: BoxDecoration(
-        gradient: AppTheme.gradientDecoration().gradient,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: AppTheme.cardShadow,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Good ${_getGreeting()}!',
-                  style: AppTheme.darkTheme.textTheme.headlineSmall?.copyWith(
-                    color: Colors.white,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.primaryDark,
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _handleRefresh,
+          color: AppTheme.accentColor,
+          backgroundColor: AppTheme.surfaceColor,
+          child: CustomScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              // App Bar
+              SliverAppBar(
+                floating: true,
+                backgroundColor: AppTheme.primaryDark,
+                elevation: 0,
+                title: Text(
+                  'FlutterReader',
+                  style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
+                    color: AppTheme.textPrimary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                SizedBox(height: 1.h),
-                Text(
-                  'Ready to continue your reading journey?',
-                  style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                    color: Colors.white.withValues(alpha: 0.9),
+                actions: [
+                  IconButton(
+                    icon: Icon(Icons.search, color: AppTheme.textPrimary),
+                    onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
+                    tooltip: 'Search',
                   ),
-                ),
-                SizedBox(height: 2.h),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 1.h),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(20),
+                  IconButton(
+                    icon: Icon(Icons.settings_outlined, color: AppTheme.textPrimary),
+                    onPressed: () => Navigator.pushNamed(context, '/settings'),
+                    tooltip: 'Settings',
                   ),
-                  child: Text(
-                    '🔥 7-day streak',
-                    style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
+              
+              // Content
+              SliverToBoxAdapter(
+                child: _isLoading 
+                    ? _buildLoadingState()
+                    : _buildContent(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
+        backgroundColor: AppTheme.accentColor,
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: Text(
+          'Add PDF',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      bottomNavigationBar: const CustomBottomBar(
+        variant: CustomBottomBarVariant.magnetic,
+        currentIndex: 0,
+        enableHapticFeedback: true,
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return SizedBox(
+      height: 60.h,
+      child: Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Greeting
+        _buildGreetingSection(),
+        
+        SizedBox(height: 2.h),
+        
+        // Quick Stats
+        _buildStatsSection(),
+        
+        SizedBox(height: 3.h),
+        
+        // Continue Reading
+        if (_continueReadingBooks.isNotEmpty) ...[
+          _buildSectionHeader('Continue Reading', onViewAll: () {
+            Navigator.pushNamed(context, '/pdf-library');
+          }),
+          SizedBox(height: 1.5.h),
+          _buildContinueReadingList(),
+          SizedBox(height: 3.h),
+        ],
+        
+        // Recent Books
+        if (_recentBooks.isNotEmpty) ...[
+          _buildSectionHeader('Recently Opened'),
+          SizedBox(height: 1.5.h),
+          _buildRecentBooksList(),
+        ],
+        
+        // Empty State
+        if (_continueReadingBooks.isEmpty && _recentBooks.isEmpty)
+          _buildEmptyState(),
+        
+        SizedBox(height: 10.h),
+      ],
+    );
+  }
+
+  Widget _buildGreetingSection() {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 2.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _getGreeting(),
+            style: AppTheme.darkTheme.textTheme.headlineSmall?.copyWith(
+              color: AppTheme.textPrimary,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          CustomIconWidget(
-            iconName: 'auto_stories',
-            color: Colors.white.withValues(alpha: 0.8),
-            size: 48,
+          SizedBox(height: 0.5.h),
+          Text(
+            _totalBooks > 0 
+                ? 'You have $_totalBooks documents in your library'
+                : 'Add PDFs to start reading',
+            style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+              color: AppTheme.textSecondary,
+            ),
           ),
         ],
       ),
     );
   }
 
-  String _getGreeting() {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'morning';
-    if (hour < 17) return 'afternoon';
-    return 'evening';
-  }
-
-  Widget _buildQuickStats() {
+  Widget _buildStatsSection() {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 4.w),
       child: Row(
         children: [
-          Expanded(
-            child: _buildStatCard(
-              icon: 'schedule',
-              title: 'Today',
-              value: '45 min',
-              subtitle: 'Reading time',
-            ),
-          ),
-          SizedBox(width: 4.w),
-          Expanded(
-            child: _buildStatCard(
-              icon: 'auto_stories',
-              title: 'Progress',
-              value: '23',
-              subtitle: 'Pages read',
-            ),
-          ),
-          SizedBox(width: 4.w),
-          Expanded(
-            child: _buildStatCard(
-              icon: 'trending_up',
-              title: 'Goal',
-              value: '89%',
-              subtitle: 'Weekly',
-            ),
-          ),
+          Expanded(child: _buildStatCard(
+            icon: Icons.library_books,
+            label: 'Total',
+            value: _totalBooks.toString(),
+            color: AppTheme.accentColor,
+          )),
+          SizedBox(width: 3.w),
+          Expanded(child: _buildStatCard(
+            icon: Icons.auto_stories,
+            label: 'Reading',
+            value: _inProgressBooks.toString(),
+            color: AppTheme.warningColor,
+          )),
+          SizedBox(width: 3.w),
+          Expanded(child: _buildStatCard(
+            icon: Icons.check_circle_outline,
+            label: 'Done',
+            value: _completedBooks.toString(),
+            color: AppTheme.successColor,
+          )),
         ],
       ),
     );
   }
 
   Widget _buildStatCard({
-    required String icon,
-    required String title,
+    required IconData icon,
+    required String label,
     required String value,
-    required String subtitle,
+    required Color color,
   }) {
     return Container(
       padding: EdgeInsets.all(3.w),
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: AppTheme.cardShadow,
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1,
+        ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              CustomIconWidget(
-                iconName: icon,
-                color: AppTheme.accentColor,
-                size: 20,
-              ),
-              SizedBox(width: 2.w),
-              Text(
-                title,
-                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                  color: AppTheme.textSecondary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
+          Icon(icon, color: color, size: 24),
           SizedBox(height: 1.h),
           Text(
             value,
@@ -302,7 +286,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
             ),
           ),
           Text(
-            subtitle,
+            label,
             style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
               color: AppTheme.textSecondary,
             ),
@@ -312,146 +296,104 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildContinueReading() {
-    if (_continueReadingBooks.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4.w),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Continue Reading',
-                style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.w600,
+  Widget _buildSectionHeader(String title, {VoidCallback? onViewAll}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4.w),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
+              color: AppTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (onViewAll != null)
+            TextButton(
+              onPressed: onViewAll,
+              child: Text(
+                'View All',
+                style: TextStyle(
+                  color: AppTheme.accentColor,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-              TextButton(
-                onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
-                child: Text(
-                  'View All',
-                  style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                    color: AppTheme.accentColor,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(height: 1.5.h), // Reduced spacing
-        SizedBox(
-          height: 26.h, // Increased from 22.h to 26.h to fix overflow
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: EdgeInsets.symmetric(horizontal: 4.w),
-            itemCount: _continueReadingBooks.length,
-            itemBuilder: (context, index) {
-              final book = _continueReadingBooks[index];
-              return _buildBookCard(book);
-            },
-          ),
-        ),
-      ],
+            ),
+        ],
+      ),
     );
   }
 
-  Widget _buildBookCard(DocumentModel book) {
+  Widget _buildContinueReadingList() {
+    return SizedBox(
+      height: 20.h,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.symmetric(horizontal: 4.w),
+        itemCount: _continueReadingBooks.length,
+        itemBuilder: (context, index) {
+          final book = _continueReadingBooks[index];
+          return _buildContinueReadingCard(book);
+        },
+      ),
+    );
+  }
+
+  Widget _buildContinueReadingCard(DocumentModel book) {
     final progress = book.readingProgress.clamp(0.0, 1.0);
 
     return GestureDetector(
       onTap: () => _handleBookTap(book),
       child: Container(
-        width: 40.w,
-        margin: EdgeInsets.only(right: 4.w),
+        width: 45.w,
+        margin: EdgeInsets.only(right: 3.w),
         decoration: BoxDecoration(
           color: AppTheme.surfaceColor,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: AppTheme.cardShadow,
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Book cover placeholder
-            Flexible(
-              fit: FlexFit.loose,
-              flex: 3,
+            // Cover
+            Expanded(
+              flex: 2,
               child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(16),
-                  ),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppTheme.accentColor.withValues(alpha: 0.6),
-                      AppTheme.gradientEnd.withValues(alpha: 0.8),
-                    ],
-                  ),
+                  color: AppTheme.accentColor.withValues(alpha: 0.15),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                 ),
                 child: Center(
-                  child: CustomIconWidget(
-                    iconName: 'menu_book',
-                    color: Colors.white,
-                    size: 32,
+                  child: Icon(
+                    Icons.picture_as_pdf,
+                    color: AppTheme.accentColor,
+                    size: 36,
                   ),
                 ),
               ),
             ),
-
-            // Book info
-            Flexible(
-              fit: FlexFit.tight,
-              flex: 3, // Increased flex from 2 to 3 to give more space to text
+            
+            // Info
+            Expanded(
+              flex: 2,
               child: Padding(
-                padding: EdgeInsets.all(2.w), // Increased padding slightly
+                padding: EdgeInsets.all(2.5.w),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.max,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Title + date block
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            book.title,
-                            style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                              color: AppTheme.textPrimary,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          SizedBox(height: 0.5.h), // Increased spacing
-                          Text(
-                            DateFormat.yMMMd().format(book.lastOpened),
-                            style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                              color: AppTheme.textSecondary,
-                              fontSize: 9,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                    Text(
+                      book.title,
+                      style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                        color: AppTheme.textPrimary,
+                        fontWeight: FontWeight.w600,
                       ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-
-                    // Progress block
                     Column(
-                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -461,17 +403,25 @@ class _HomeDashboardState extends State<HomeDashboard> {
                               style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
                                 color: AppTheme.accentColor,
                                 fontWeight: FontWeight.w600,
-                                fontSize: 9,
+                              ),
+                            ),
+                            Text(
+                              book.status == 'completed' ? 'Completed' : 'In Progress',
+                              style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                                color: AppTheme.textSecondary,
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 2),
-                        LinearProgressIndicator(
-                          value: progress,
-                          backgroundColor: AppTheme.textSecondary.withValues(alpha: 0.2),
-                          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
-                          minHeight: 2,
+                        SizedBox(height: 0.5.h),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            backgroundColor: AppTheme.textSecondary.withValues(alpha: 0.2),
+                            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
+                            minHeight: 3,
+                          ),
                         ),
                       ],
                     ),
@@ -485,226 +435,143 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  Widget _buildRecentBooks() {
-    if (_recentBooks.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: EdgeInsets.all(4.w),
-          child: Text(
-            'No recent books',
-            style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-              color: AppTheme.textSecondary,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4.w),
-          child: Text(
-            'Recently Opened',
-            style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
-              color: AppTheme.textPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        SizedBox(height: 1.5.h), // Reduced spacing
-        ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          padding: EdgeInsets.symmetric(horizontal: 4.w),
-          itemCount: _recentBooks.length,
-          itemBuilder: (context, index) {
-            final book = _recentBooks[index];
-            return _buildRecentBookTile(book);
-          },
-        ),
-      ],
+  Widget _buildRecentBooksList() {
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.symmetric(horizontal: 4.w),
+      itemCount: _recentBooks.take(5).length,
+      itemBuilder: (context, index) {
+        final book = _recentBooks[index];
+        return _buildRecentBookTile(book);
+      },
     );
   }
 
   Widget _buildRecentBookTile(DocumentModel book) {
-    final progress = book.readingProgress.clamp(0.0, 1.0);
-
-    return Container(
-      margin: EdgeInsets.only(bottom: 1.5.h), // Reduced margin to prevent overflow
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: AppTheme.cardShadow,
-      ),
-      child: ListTile(
-        onTap: () => _handleBookTap(book),
-        contentPadding: EdgeInsets.all(3.w),
-        leading: Container(
-          width: 12.w,
-          height: 12.w,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppTheme.accentColor.withValues(alpha: 0.6),
-                AppTheme.gradientEnd.withValues(alpha: 0.8),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Center(
-            child: CustomIconWidget(
-              iconName: 'article',
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
+    return GestureDetector(
+      onTap: () => _handleBookTap(book),
+      child: Container(
+        margin: EdgeInsets.only(bottom: 1.5.h),
+        padding: EdgeInsets.all(3.w),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceColor,
+          borderRadius: BorderRadius.circular(12),
         ),
-        title: Text(
-          book.title,
-          style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
-            color: AppTheme.textPrimary,
-            fontWeight: FontWeight.w600,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            SizedBox(height: 1.h),
-            Text(
-              DateFormat.yMMMd().format(book.lastOpened),
-              style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                color: AppTheme.textSecondary,
+            // Icon
+            Container(
+              width: 12.w,
+              height: 12.w,
+              decoration: BoxDecoration(
+                color: AppTheme.accentColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              child: Icon(
+                Icons.picture_as_pdf,
+                color: AppTheme.accentColor,
+                size: 24,
+              ),
             ),
-            SizedBox(height: 1.h),
-            Row(
-              children: [
-                Expanded(
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    backgroundColor: AppTheme.textSecondary.withValues(alpha: 0.2),
-                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
-                    minHeight: 2,
+            SizedBox(width: 3.w),
+            
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    book.title,
+                    style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                SizedBox(width: 2.w),
-                Text(
-                  '${(progress * 100).toInt()}%',
-                  style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                    color: AppTheme.accentColor,
-                    fontWeight: FontWeight.w600,
+                  SizedBox(height: 0.5.h),
+                  Text(
+                    'Last opened ${_formatDate(book.lastOpened)}',
+                    style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                      color: AppTheme.textSecondary,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
+            ),
+            
+            // Arrow
+            Icon(
+              Icons.chevron_right,
+              color: AppTheme.textSecondary,
             ),
           ],
-        ),
-        trailing: CustomIconWidget(
-          iconName: 'chevron_right',
-          color: AppTheme.textSecondary,
-          size: 20,
         ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.primaryDark,
-      appBar: CustomAppBar(
-        title: 'FlutterReader Pro',
-        variant: CustomAppBarVariant.standard,
-        actions: [
-          IconButton(
-            icon: CustomIconWidget(
-              iconName: 'search',
-              color: AppTheme.textPrimary,
-              size: 24,
-            ),
-            onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
-            tooltip: 'Search documents',
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    
+    if (diff.inDays == 0) return 'today';
+    if (diff.inDays == 1) return 'yesterday';
+    if (diff.inDays < 7) return '${diff.inDays} days ago';
+    return DateFormat.MMMd().format(date);
+  }
+
+  Widget _buildEmptyState() {
+    return Container(
+      margin: EdgeInsets.all(4.w),
+      padding: EdgeInsets.all(6.w),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.accentColor.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.library_books_outlined,
+            color: AppTheme.accentColor,
+            size: 48,
           ),
-          IconButton(
-            icon: CustomIconWidget(
-              iconName: 'settings',
+          SizedBox(height: 2.h),
+          Text(
+            'Your library is empty',
+            style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
               color: AppTheme.textPrimary,
-              size: 24,
+              fontWeight: FontWeight.w600,
             ),
-            onPressed: () => Navigator.pushNamed(context, AppRoutes.settings),
-            tooltip: 'Settings',
+          ),
+          SizedBox(height: 1.h),
+          Text(
+            'Add PDF documents to start reading\nand annotating',
+            textAlign: TextAlign.center,
+            style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          SizedBox(height: 3.h),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentColor,
+              foregroundColor: Colors.white,
+              padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 1.5.h),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.add),
+            label: const Text('Add PDF'),
           ),
         ],
-      ),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _handleRefresh,
-          color: AppTheme.accentColor,
-          backgroundColor: AppTheme.surfaceColor,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Greeting header
-                _buildGreetingHeader(),
-
-                SizedBox(height: 1.h), // Further reduced spacing
-
-                // Quick stats
-                _buildQuickStats(),
-
-                SizedBox(height: 2.h), // Further reduced spacing
-
-                // Continue reading section
-                _buildContinueReading(),
-
-                SizedBox(height: 2.h), // Further reduced spacing
-
-                // Recent books
-                _buildRecentBooks(),
-
-                SizedBox(height: 4.h), // Further reduced bottom padding to prevent overflow
-              ],
-            ),
-          ),
-        ),
-      ),
-      floatingActionButton: Container(
-        decoration: BoxDecoration(
-          gradient: AppTheme.gradientDecoration().gradient,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: AppTheme.accentColor.withValues(alpha: 0.3),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: FloatingActionButton(
-          onPressed: _showImportOptions,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          child: CustomIconWidget(
-            iconName: 'add',
-            color: Colors.white,
-            size: 28,
-          ),
-        ),
-      ),
-      bottomNavigationBar: const CustomBottomBar(
-        variant: CustomBottomBarVariant.magnetic,
-        currentIndex: 0,
-        enableHapticFeedback: true,
       ),
     );
   }

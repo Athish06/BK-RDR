@@ -57,15 +57,9 @@ class _CustomBottomBarState extends State<CustomBottomBar>
       route: '/pdf-library',
     ),
     _NavigationItem(
-      icon: Icons.picture_as_pdf_outlined,
-      activeIcon: Icons.picture_as_pdf,
-      label: 'Reader',
-      route: '/pdf-reader',
-    ),
-    _NavigationItem(
-      icon: Icons.edit_outlined,
-      activeIcon: Icons.edit,
-      label: 'Annotate',
+      icon: Icons.edit_note_outlined,
+      activeIcon: Icons.edit_note,
+      label: 'Notes',
       route: '/annotation-tools',
     ),
     _NavigationItem(

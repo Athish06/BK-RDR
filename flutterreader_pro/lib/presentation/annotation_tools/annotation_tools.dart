@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/app_export.dart';
-import './widgets/annotation_list_widget.dart';
-import './widgets/annotation_toolbar_widget.dart';
-import './widgets/drawing_canvas_widget.dart';
-import './widgets/export_options_widget.dart';
-import './widgets/note_editor_widget.dart';
+import '../../widgets/custom_bottom_bar.dart';
 
+/// Annotation Notes page - shows all annotations and notes from documents
 class AnnotationTools extends StatefulWidget {
   const AnnotationTools({super.key});
 
@@ -16,162 +14,105 @@ class AnnotationTools extends StatefulWidget {
   State<AnnotationTools> createState() => _AnnotationToolsState();
 }
 
-class _AnnotationToolsState extends State<AnnotationTools>
-    with TickerProviderStateMixin {
-  late AnimationController _fadeController;
-  late Animation<double> _fadeAnimation;
-  late TextEditingController _searchController;
-
-  String _selectedTool = 'highlight';
-  Color _selectedColor = AppTheme.warningColor;
+class _AnnotationToolsState extends State<AnnotationTools> {
+  final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  bool _showToolbar = true;
-  bool _showDrawingCanvas = false;
-  bool _showNoteEditor = false;
-  bool _showExportOptions = false;
+  String _selectedFilter = 'All';
+  bool _isLoading = true;
+  
+  // Saved annotations from documents
+  List<Map<String, dynamic>> _annotations = [];
+  List<Map<String, dynamic>> _quickNotes = [];
 
-  // Undo/Redo stacks
-  List<Map<String, dynamic>> _undoStack = [];
-  List<Map<String, dynamic>> _redoStack = [];
-
-  // Mock annotations data
-  final List<Map<String, dynamic>> _mockAnnotations = [];
+  final List<String> _filterOptions = ['All', 'Highlights', 'Underlines', 'Drawings', 'Notes'];
 
   @override
   void initState() {
     super.initState();
-    _searchController = TextEditingController();
-
-    _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _fadeController,
-      curve: Curves.easeInOut,
-    ));
-
-    _fadeController.forward();
-    _searchController.addListener(_onSearchChanged);
+    _loadAnnotations();
   }
 
   @override
   void dispose() {
-    _fadeController.dispose();
-    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
-  void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text;
-    });
+  Future<void> _loadAnnotations() async {
+    setState(() => _isLoading = true);
+    
+    // In a real app, this would load from a database/storage
+    // For now, we'll show empty state since annotations are stored per-document
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    if (mounted) {
+      setState(() {
+        _annotations = [];
+        _quickNotes = [];
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<Map<String, dynamic>> get _filteredAnnotations {
+    var filtered = [..._annotations, ..._quickNotes];
+    
+    // Apply search filter
+    if (_searchQuery.isNotEmpty) {
+      filtered = filtered.where((a) {
+        final content = (a['content'] ?? a['note'] ?? '').toString().toLowerCase();
+        final docTitle = (a['documentTitle'] ?? '').toString().toLowerCase();
+        return content.contains(_searchQuery.toLowerCase()) ||
+               docTitle.contains(_searchQuery.toLowerCase());
+      }).toList();
+    }
+    
+    // Apply type filter
+    if (_selectedFilter != 'All') {
+      filtered = filtered.where((a) {
+        final type = a['type']?.toString().toLowerCase() ?? '';
+        switch (_selectedFilter) {
+          case 'Highlights':
+            return type.contains('highlight');
+          case 'Underlines':
+            return type == 'underline';
+          case 'Drawings':
+            return type == 'drawing';
+          case 'Notes':
+            return type == 'note' || a['note'] != null;
+          default:
+            return true;
+        }
+      }).toList();
+    }
+    
+    return filtered;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.primaryDark,
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: SafeArea(
-          child: Stack(
-            children: [
-              // Main content
-              Column(
-                children: [
-                  // Header
-                  _buildHeader(),
-
-                  // Search bar
-                  _buildSearchBar(),
-
-                  // Annotations list
-                  Expanded(
-                    child: AnnotationListWidget(
-                      annotations: _mockAnnotations,
-                      searchQuery: _searchQuery,
-                      onAnnotationTap: _jumpToAnnotation,
-                      onAnnotationEdit: _editAnnotation,
-                      onAnnotationDelete: _deleteAnnotation,
-                      onAnnotationShare: _shareAnnotation,
-                    ),
-                  ),
-                ],
-              ),
-
-              // Floating toolbar
-              if (_showToolbar)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: AnnotationToolbarWidget(
-                    selectedTool: _selectedTool,
-                    selectedColor: _selectedColor,
-                    canUndo: _undoStack.isNotEmpty,
-                    canRedo: _redoStack.isNotEmpty,
-                    onToolSelected: _onToolSelected,
-                    onColorSelected: _onColorSelected,
-                    onUndo: _performUndo,
-                    onRedo: _performRedo,
-                  ),
-                ),
-
-              // Drawing canvas overlay
-              if (_showDrawingCanvas)
-                DrawingCanvasWidget(
-                  selectedColor: _selectedColor,
-                  strokeWidth: 3.0,
-                  onDrawingComplete: _saveDrawing,
-                  onClose: () {
-                    setState(() {
-                      _showDrawingCanvas = false;
-                    });
-                  },
-                ),
-
-              // Note editor overlay
-              if (_showNoteEditor)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: NoteEditorWidget(
-                    title: 'Add Note',
-                    maxLength: 500,
-                    onSave: _saveNote,
-                    onCancel: () {
-                      setState(() {
-                        _showNoteEditor = false;
-                      });
-                    },
-                  ),
-                ),
-
-              // Export options overlay
-              if (_showExportOptions)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: ExportOptionsWidget(
-                    annotations: _mockAnnotations,
-                    documentTitle: 'Flutter Development Guide',
-                    onClose: () {
-                      setState(() {
-                        _showExportOptions = false;
-                      });
-                    },
-                  ),
-                ),
-            ],
-          ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            _buildSearchBar(),
+            _buildFilterChips(),
+            Expanded(
+              child: _isLoading
+                  ? _buildLoadingState()
+                  : _filteredAnnotations.isEmpty
+                      ? _buildEmptyState()
+                      : _buildAnnotationsList(),
+            ),
+          ],
         ),
+      ),
+      bottomNavigationBar: const CustomBottomBar(
+        variant: CustomBottomBarVariant.magnetic,
+        currentIndex: 2,
+        enableHapticFeedback: true,
       ),
     );
   }
@@ -187,20 +128,15 @@ class _AnnotationToolsState extends State<AnnotationTools>
               Navigator.pop(context);
             },
             child: Container(
-              width: 10.w,
-              height: 10.w,
+              padding: EdgeInsets.all(2.w),
               decoration: BoxDecoration(
                 color: AppTheme.surfaceColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: AppTheme.textSecondary.withValues(alpha: 0.2),
-                  width: 1,
-                ),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: CustomIconWidget(
-                iconName: 'arrow_back_ios',
-                size: 5.w,
+              child: Icon(
+                Icons.arrow_back_ios_new,
                 color: AppTheme.textPrimary,
+                size: 18,
               ),
             ),
           ),
@@ -210,64 +146,19 @@ class _AnnotationToolsState extends State<AnnotationTools>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Annotation Tools',
+                  'Notes & Annotations',
                   style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
                     color: AppTheme.textPrimary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
                 Text(
-                  '${_mockAnnotations.length} annotations • Flutter Guide',
+                  '${_filteredAnnotations.length} items',
                   style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
                     color: AppTheme.textSecondary,
                   ),
                 ),
               ],
-            ),
-          ),
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.lightImpact();
-              setState(() {
-                _showExportOptions = true;
-              });
-            },
-            child: Container(
-              width: 10.w,
-              height: 10.w,
-              decoration: BoxDecoration(
-                gradient: AppTheme.gradientDecoration().gradient,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: CustomIconWidget(
-                iconName: 'file_download',
-                size: 5.w,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          ),
-          SizedBox(width: 2.w),
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.lightImpact();
-              Navigator.pushNamed(context, '/settings');
-            },
-            child: Container(
-              width: 10.w,
-              height: 10.w,
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: AppTheme.textSecondary.withValues(alpha: 0.2),
-                  width: 1,
-                ),
-              ),
-              child: CustomIconWidget(
-                iconName: 'more_vert',
-                size: 5.w,
-                color: AppTheme.textPrimary,
-              ),
             ),
           ),
         ],
@@ -278,22 +169,14 @@ class _AnnotationToolsState extends State<AnnotationTools>
   Widget _buildSearchBar() {
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
-      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
+      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.2.h),
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppTheme.textSecondary.withValues(alpha: 0.2),
-          width: 1,
-        ),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
-          CustomIconWidget(
-            iconName: 'search',
-            size: 5.w,
-            color: AppTheme.textSecondary,
-          ),
+          Icon(Icons.search, color: AppTheme.textSecondary, size: 20),
           SizedBox(width: 3.w),
           Expanded(
             child: TextField(
@@ -302,359 +185,325 @@ class _AnnotationToolsState extends State<AnnotationTools>
                 color: AppTheme.textPrimary,
               ),
               decoration: InputDecoration(
-                hintText: 'Search annotations, notes, or content...',
+                hintText: 'Search annotations...',
                 hintStyle: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
                   color: AppTheme.textSecondary.withValues(alpha: 0.6),
                 ),
                 border: InputBorder.none,
                 contentPadding: EdgeInsets.zero,
+                isDense: true,
               ),
+              onChanged: (value) {
+                setState(() => _searchQuery = value);
+              },
             ),
           ),
           if (_searchQuery.isNotEmpty)
             GestureDetector(
               onTap: () {
-                HapticFeedback.lightImpact();
                 _searchController.clear();
+                setState(() => _searchQuery = '');
               },
-              child: CustomIconWidget(
-                iconName: 'clear',
-                size: 5.w,
-                color: AppTheme.textSecondary,
-              ),
+              child: Icon(Icons.clear, color: AppTheme.textSecondary, size: 20),
             ),
         ],
       ),
     );
   }
 
-  void _onToolSelected(String tool) {
-    setState(() {
-      _selectedTool = tool;
-    });
+  Widget _buildFilterChips() {
+    return Container(
+      height: 5.h,
+      margin: EdgeInsets.only(bottom: 1.h),
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.symmetric(horizontal: 4.w),
+        itemCount: _filterOptions.length,
+        itemBuilder: (context, index) {
+          final filter = _filterOptions[index];
+          final isSelected = _selectedFilter == filter;
+          
+          return GestureDetector(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              setState(() => _selectedFilter = filter);
+            },
+            child: Container(
+              margin: EdgeInsets.only(right: 2.w),
+              padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
+              decoration: BoxDecoration(
+                color: isSelected ? AppTheme.accentColor : AppTheme.surfaceColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isSelected 
+                      ? AppTheme.accentColor 
+                      : AppTheme.textSecondary.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Text(
+                filter,
+                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                  color: isSelected ? Colors.white : AppTheme.textPrimary,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
-    switch (tool) {
-      case 'draw':
-        setState(() {
-          _showDrawingCanvas = true;
-          _showToolbar = false;
-        });
-        break;
-      case 'note':
-        setState(() {
-          _showNoteEditor = true;
-          _showToolbar = false;
-        });
-        break;
-      default:
-        // For highlight, underline, strikethrough - would integrate with PDF viewer
-        HapticFeedback.mediumImpact();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                '${tool.toUpperCase()} tool selected. Select text in PDF to apply.'),
-            backgroundColor: AppTheme.accentColor,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
+  Widget _buildLoadingState() {
+    return Center(
+      child: CircularProgressIndicator(
+        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.accentColor),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(8.w),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.edit_note_outlined,
+              color: AppTheme.accentColor.withValues(alpha: 0.5),
+              size: 64,
+            ),
+            SizedBox(height: 3.h),
+            Text(
+              'No annotations yet',
+              style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
+                color: AppTheme.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: 1.h),
+            Text(
+              'Open a PDF and use annotation tools\nto highlight, underline, draw, or add notes',
+              textAlign: TextAlign.center,
+              style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                color: AppTheme.textSecondary,
+              ),
+            ),
+            SizedBox(height: 4.h),
+            
+            // Tools info
+            _buildToolsInfo(),
+            
+            SizedBox(height: 4.h),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/pdf-library'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentColor,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 1.5.h),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.library_books),
+              label: const Text('Open Library'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToolsInfo() {
+    return Container(
+      padding: EdgeInsets.all(4.w),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Available Tools',
+            style: AppTheme.darkTheme.textTheme.titleSmall?.copyWith(
+              color: AppTheme.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        );
-        break;
-    }
+          SizedBox(height: 2.h),
+          _buildToolItem(Icons.highlight, 'Highlight', 'Paint or text-detect highlight'),
+          _buildToolItem(Icons.format_underlined, 'Underline', 'Underline text'),
+          _buildToolItem(Icons.draw, 'Draw', 'Freehand drawing'),
+          _buildToolItem(Icons.note_add, 'Notes', 'Add notes to annotations'),
+          _buildToolItem(Icons.auto_fix_off, 'Eraser', 'Remove annotations'),
+        ],
+      ),
+    );
   }
 
-  void _onColorSelected(Color color) {
-    setState(() {
-      _selectedColor = color;
-    });
+  Widget _buildToolItem(IconData icon, String title, String subtitle) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 1.5.h),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(2.w),
+            decoration: BoxDecoration(
+              color: AppTheme.accentColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: AppTheme.accentColor, size: 18),
+          ),
+          SizedBox(width: 3.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                    color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  void _jumpToAnnotation(Map<String, dynamic> annotation) {
-    HapticFeedback.lightImpact();
-
-    // Navigate to PDF reader with specific page
-    Navigator.pushNamed(
-      context,
-      '/pdf-reader',
-      arguments: {
-        'page': annotation['page'],
-        'annotationId': annotation['id'],
+  Widget _buildAnnotationsList() {
+    final grouped = _groupByDocument(_filteredAnnotations);
+    
+    return ListView.builder(
+      padding: EdgeInsets.symmetric(horizontal: 4.w),
+      itemCount: grouped.length,
+      itemBuilder: (context, index) {
+        final docTitle = grouped.keys.elementAt(index);
+        final docAnnotations = grouped[docTitle]!;
+        
+        return _buildDocumentSection(docTitle, docAnnotations);
       },
     );
   }
 
-  void _editAnnotation(Map<String, dynamic> annotation) {
-    HapticFeedback.lightImpact();
-
-    if (annotation['type'] == 'note') {
-      setState(() {
-        _showNoteEditor = true;
-        _showToolbar = false;
-      });
-    } else {
-      // Show edit options for other annotation types
-      _showEditOptions(annotation);
+  Map<String, List<Map<String, dynamic>>> _groupByDocument(List<Map<String, dynamic>> annotations) {
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    
+    for (final annotation in annotations) {
+      final docTitle = annotation['documentTitle'] ?? 'Unknown Document';
+      grouped.putIfAbsent(docTitle, () => []).add(annotation);
     }
+    
+    return grouped;
   }
 
-  void _deleteAnnotation(Map<String, dynamic> annotation) {
-    HapticFeedback.mediumImpact();
-
-    // Add to undo stack before deletion
-    _undoStack.add({
-      'action': 'delete',
-      'annotation': Map.from(annotation),
-      'timestamp': DateTime.now(),
-    });
-
-    setState(() {
-      _mockAnnotations.removeWhere((a) => a['id'] == annotation['id']);
-      _redoStack.clear(); // Clear redo stack on new action
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Annotation deleted'),
-        backgroundColor: AppTheme.errorColor,
-        behavior: SnackBarBehavior.floating,
-        action: SnackBarAction(
-          label: 'Undo',
-          textColor: AppTheme.textPrimary,
-          onPressed: _performUndo,
-        ),
-      ),
-    );
-  }
-
-  void _shareAnnotation(Map<String, dynamic> annotation) {
-    HapticFeedback.lightImpact();
-
-    final content = '''
-Annotation from Flutter Development Guide
-Page ${annotation['page']} • ${annotation['type'].toUpperCase()}
-
-${annotation['content']}
-
-Created: ${annotation['timestamp']}
-Shared via FlutterReader Pro
-''';
-
-    // In a real app, this would use the share plugin
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Annotation copied to clipboard'),
-        backgroundColor: AppTheme.successColor,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-
-    Clipboard.setData(ClipboardData(text: content));
-  }
-
-  void _saveDrawing(List<Offset> points) {
-    HapticFeedback.mediumImpact();
-
-    final newAnnotation = {
-      'id': 'ann_${DateTime.now().millisecondsSinceEpoch}',
-      'type': 'draw',
-      'content': 'Custom drawing with ${points.length} points',
-      'page': 1, // Current page in PDF
-      'timestamp': DateTime.now(),
-      'color': _selectedColor,
-      'drawingPoints': points,
-    };
-
-    setState(() {
-      _mockAnnotations.insert(0, newAnnotation);
-      _showDrawingCanvas = false;
-      _showToolbar = true;
-    });
-
-    // Add to undo stack
-    _undoStack.add({
-      'action': 'add',
-      'annotation': Map.from(newAnnotation),
-      'timestamp': DateTime.now(),
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Drawing saved successfully'),
-        backgroundColor: AppTheme.successColor,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  void _saveNote(String noteText) {
-    HapticFeedback.mediumImpact();
-
-    final newAnnotation = {
-      'id': 'ann_${DateTime.now().millisecondsSinceEpoch}',
-      'type': 'note',
-      'content': noteText,
-      'page': 1, // Current page in PDF
-      'timestamp': DateTime.now(),
-      'color': _selectedColor,
-    };
-
-    setState(() {
-      _mockAnnotations.insert(0, newAnnotation);
-      _showNoteEditor = false;
-      _showToolbar = true;
-    });
-
-    // Add to undo stack
-    _undoStack.add({
-      'action': 'add',
-      'annotation': Map.from(newAnnotation),
-      'timestamp': DateTime.now(),
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Note saved successfully'),
-        backgroundColor: AppTheme.successColor,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  void _performUndo() {
-    if (_undoStack.isEmpty) return;
-
-    HapticFeedback.lightImpact();
-    final lastAction = _undoStack.removeLast();
-
-    switch (lastAction['action']) {
-      case 'add':
-        // Remove the added annotation
-        final annotation = lastAction['annotation'];
-        setState(() {
-          _mockAnnotations.removeWhere((a) => a['id'] == annotation['id']);
-        });
-        break;
-      case 'delete':
-        // Restore the deleted annotation
-        final annotation = lastAction['annotation'];
-        setState(() {
-          _mockAnnotations.insert(0, annotation);
-        });
-        break;
-      case 'edit':
-        // Restore previous version
-        final annotation = lastAction['annotation'];
-        final index =
-            _mockAnnotations.indexWhere((a) => a['id'] == annotation['id']);
-        if (index != -1) {
-          setState(() {
-            _mockAnnotations[index] = annotation;
-          });
-        }
-        break;
-    }
-
-    // Move to redo stack
-    _redoStack.add(lastAction);
-  }
-
-  void _performRedo() {
-    if (_redoStack.isEmpty) return;
-
-    HapticFeedback.lightImpact();
-    final action = _redoStack.removeLast();
-
-    switch (action['action']) {
-      case 'add':
-        // Re-add the annotation
-        final annotation = action['annotation'];
-        setState(() {
-          _mockAnnotations.insert(0, annotation);
-        });
-        break;
-      case 'delete':
-        // Re-delete the annotation
-        final annotation = action['annotation'];
-        setState(() {
-          _mockAnnotations.removeWhere((a) => a['id'] == annotation['id']);
-        });
-        break;
-      case 'edit':
-        // Re-apply the edit
-        final annotation = action['annotation'];
-        final index =
-            _mockAnnotations.indexWhere((a) => a['id'] == annotation['id']);
-        if (index != -1) {
-          setState(() {
-            _mockAnnotations[index] = annotation;
-          });
-        }
-        break;
-    }
-
-    // Move back to undo stack
-    _undoStack.add(action);
-  }
-
-  void _showEditOptions(Map<String, dynamic> annotation) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: AppTheme.surfaceColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  Widget _buildDocumentSection(String docTitle, List<Map<String, dynamic>> annotations) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: 1.5.h),
+          child: Row(
             children: [
-              Container(
-                width: 40.w,
-                height: 0.5.h,
-                margin: EdgeInsets.symmetric(vertical: 1.h),
-                decoration: BoxDecoration(
-                  color: AppTheme.textSecondary.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              ListTile(
-                leading: CustomIconWidget(
-                  iconName: 'palette',
-                  size: 6.w,
-                  color: AppTheme.accentColor,
-                ),
-                title: Text(
-                  'Change Color',
-                  style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+              Icon(Icons.picture_as_pdf, color: AppTheme.accentColor, size: 18),
+              SizedBox(width: 2.w),
+              Expanded(
+                child: Text(
+                  docTitle,
+                  style: AppTheme.darkTheme.textTheme.titleSmall?.copyWith(
                     color: AppTheme.textPrimary,
+                    fontWeight: FontWeight.w600,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Show color picker
-                },
               ),
-              ListTile(
-                leading: CustomIconWidget(
-                  iconName: 'edit',
-                  size: 6.w,
-                  color: AppTheme.successColor,
+              Text(
+                '${annotations.length}',
+                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                  color: AppTheme.textSecondary,
                 ),
-                title: Text(
-                  'Edit Content',
-                  style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  // Show edit dialog
-                },
               ),
-              SizedBox(height: 2.h),
             ],
           ),
         ),
+        ...annotations.map((a) => _buildAnnotationTile(a)),
+        SizedBox(height: 1.h),
+      ],
+    );
+  }
+
+  Widget _buildAnnotationTile(Map<String, dynamic> annotation) {
+    final type = annotation['type'] ?? 'note';
+    final content = annotation['content'] ?? annotation['note'] ?? '';
+    final page = annotation['page'] ?? 0;
+    final color = annotation['color'] as Color? ?? AppTheme.accentColor;
+    
+    IconData icon;
+    switch (type.toString().toLowerCase()) {
+      case 'highlight':
+      case 'texthighlight':
+        icon = Icons.highlight;
+        break;
+      case 'underline':
+        icon = Icons.format_underlined;
+        break;
+      case 'drawing':
+        icon = Icons.draw;
+        break;
+      default:
+        icon = Icons.note;
+    }
+    
+    return Container(
+      margin: EdgeInsets.only(bottom: 1.h),
+      padding: EdgeInsets.all(3.w),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: color, width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          SizedBox(width: 3.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (content.isNotEmpty)
+                  Text(
+                    content,
+                    style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.textPrimary,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                Text(
+                  'Page $page',
+                  style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+        ],
       ),
     );
   }

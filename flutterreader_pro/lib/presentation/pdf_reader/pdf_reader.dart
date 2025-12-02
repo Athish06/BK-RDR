@@ -583,13 +583,18 @@ class _PdfReaderState extends State<PdfReader> {
   }
   
   // Enable pan mode
-  void _enablePanMode() {
+  void _togglePanMode() {
     setState(() {
-      _isPanMode = true;
-      _isToolActive = false;
-      _showFloatingNavbar = false;
-      _showZoomControls = false;
-      _showAnnotationToolbar = false;
+      _isPanMode = !_isPanMode;
+      if (_isPanMode) {
+        // Entering pan mode - disable tool but keep current selection for when exiting
+        _isToolActive = false;
+        _showFloatingNavbar = false;
+        _showAnnotationToolbar = false;
+      } else {
+        // Exiting pan mode - restore controls
+        _showFloatingNavbar = true;
+      }
     });
     HapticFeedback.lightImpact();
   }
@@ -967,6 +972,60 @@ class _PdfReaderState extends State<PdfReader> {
     }
   }
   
+  // Get rectangles for search matches on a page
+  Future<List<List<PdfRect>>> _getSearchMatchRects(
+    PdfPage page,
+    List<PdfPageTextRange> matches,
+  ) async {
+    final result = <List<PdfRect>>[];
+    try {
+      for (final match in matches) {
+        // Each match has pageText with charRects for the characters
+        // Get rects from start to end index
+        final rects = <PdfRect>[];
+        final charRects = match.pageText.charRects;
+        for (int i = match.start; i < match.end && i < charRects.length; i++) {
+          rects.add(charRects[i]);
+        }
+        if (rects.isNotEmpty) {
+          // Merge adjacent rects into lines
+          result.add(_mergeRectsIntoLines(rects));
+        }
+      }
+    } catch (e) {
+      print('❌ Error getting search match rects: $e');
+    }
+    return result;
+  }
+  
+  // Merge adjacent character rects into line rects
+  List<PdfRect> _mergeRectsIntoLines(List<PdfRect> charRects) {
+    if (charRects.isEmpty) return [];
+    
+    final lines = <PdfRect>[];
+    var currentLine = charRects.first;
+    
+    for (int i = 1; i < charRects.length; i++) {
+      final rect = charRects[i];
+      // Check if on same line (similar y position)
+      if ((rect.top - currentLine.top).abs() < (currentLine.bottom - currentLine.top) * 0.5) {
+        // Same line - extend current rect
+        currentLine = PdfRect(
+          currentLine.left,
+          currentLine.top,
+          rect.right,
+          currentLine.bottom,
+        );
+      } else {
+        // New line
+        lines.add(currentLine);
+        currentLine = rect;
+      }
+    }
+    lines.add(currentLine);
+    return lines;
+  }
+  
   void _toggleDarkMode() {
     setState(() {
       _isDarkMode = !_isDarkMode;
@@ -1037,8 +1096,8 @@ class _PdfReaderState extends State<PdfReader> {
         children: [
           // PDF Content Area
           GestureDetector(
-            // Only toggle controls when no tool is active
-            onTap: _isToolActive ? null : _toggleControls,
+            // Always allow tap to toggle controls (tool stays active via _toggleControls logic)
+            onTap: _toggleControls,
             onDoubleTap: _isToolActive ? null : () {
               _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
             },
@@ -1618,86 +1677,103 @@ class _PdfReaderState extends State<PdfReader> {
   
   // Build slim slide-out zoom controls (Android-style minimal sidebar)
   Widget _buildSlideOutZoomControls() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOutCubic,
-      transform: Matrix4.translationValues(
-        _showZoomControls ? 0 : 48, // Slide off-screen when hidden, keep handle visible
-        0,
-        0,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Visible slide handle - always visible with accent color
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                _showZoomControls = !_showZoomControls;
-              });
-              HapticFeedback.lightImpact();
-            },
-            onHorizontalDragEnd: (details) {
-              if (details.primaryVelocity != null) {
-                if (details.primaryVelocity! > 0) {
-                  setState(() => _showZoomControls = false);
-                } else {
-                  setState(() => _showZoomControls = true);
-                }
+    // Calculate the width of the zoom panel (without handle)
+    final panelWidth = 42.0; // Approximate width of zoom controls
+    
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Visible slide handle - ALWAYS visible, never moves
+        GestureDetector(
+          onTap: () {
+            setState(() {
+              _showZoomControls = !_showZoomControls;
+            });
+            HapticFeedback.lightImpact();
+          },
+          onHorizontalDragEnd: (details) {
+            if (details.primaryVelocity != null) {
+              if (details.primaryVelocity! > 0) {
+                setState(() => _showZoomControls = false);
+              } else {
+                setState(() => _showZoomControls = true);
               }
-            },
-            child: Container(
-              width: 6,
-              height: 50,
-              margin: const EdgeInsets.only(right: 1),
-              decoration: BoxDecoration(
-                color: _showZoomControls 
-                    ? AppTheme.accentColor.withValues(alpha: 0.7)
-                    : AppTheme.accentColor.withValues(alpha: 0.9),
-                borderRadius: const BorderRadius.horizontal(left: Radius.circular(6)),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.accentColor.withValues(alpha: 0.3),
-                    blurRadius: 4,
-                    offset: const Offset(-1, 0),
-                  ),
-                ],
-              ),
-              child: Center(
-                child: Container(
-                  width: 2,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(1),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Compact zoom controls panel
-          Container(
+            }
+          },
+          child: Container(
+            width: 8,
+            height: 55,
             decoration: BoxDecoration(
-              color: AppTheme.surfaceColor.withValues(alpha: 0.92),
-              borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+              color: AppTheme.accentColor,
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
+                  color: AppTheme.accentColor.withValues(alpha: 0.4),
                   blurRadius: 6,
-                  offset: const Offset(-1, 0),
+                  offset: const Offset(-2, 0),
                 ),
               ],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Pan/cursor mode button
-                GestureDetector(
-                  onTap: () {
-                    HapticFeedback.lightImpact();
-                    _enablePanMode();
-                  },
-                  child: Container(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 2,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Container(
+                    width: 2,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // Animated zoom controls panel - slides in/out
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          width: _showZoomControls ? panelWidth : 0,
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 150),
+            opacity: _showZoomControls ? 1.0 : 0.0,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              child: Container(
+                width: panelWidth,
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceColor.withValues(alpha: 0.95),
+                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 6,
+                      offset: const Offset(-1, 0),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pan/cursor mode button (toggle)
+                    GestureDetector(
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        _togglePanMode();
+                      },
+                      child: Container(
                     padding: EdgeInsets.all(1.8.w),
                     decoration: BoxDecoration(
                       color: _isPanMode ? AppTheme.accentColor.withValues(alpha: 0.25) : Colors.transparent,
@@ -1755,8 +1831,10 @@ class _PdfReaderState extends State<PdfReader> {
               ],
             ),
           ),
-        ],
-      ),
+            ),
+          ),
+        ),
+      ],
     );
   }
   
@@ -1774,11 +1852,11 @@ class _PdfReaderState extends State<PdfReader> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Pan/cursor mode button
+          // Pan/cursor mode button (toggle)
           GestureDetector(
             onTap: () {
               HapticFeedback.lightImpact();
-              _enablePanMode();
+              _togglePanMode();
             },
             child: Container(
               padding: EdgeInsets.all(2.w),
@@ -2124,22 +2202,48 @@ class _PdfReaderState extends State<PdfReader> {
         ? pageAnnotations.where((a) => a.id == _selectedAnnotationId).firstOrNull
         : null;
     
+    // Get search matches for this page
+    final searchMatches = _textSearcher?.matches
+        .where((m) => m.pageNumber == page.pageNumber)
+        .toList() ?? [];
+    final currentMatchIndex = _textSearcher?.currentIndex;
+    
     return Stack(
       children: [
-        // Render existing annotations with tap-to-select support in pan mode
+        // Search results highlighting layer
+        if (searchMatches.isNotEmpty)
+          FutureBuilder<List<List<PdfRect>>>(
+            future: _getSearchMatchRects(page, searchMatches),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              final matchRects = snapshot.data!;
+              return CustomPaint(
+                size: pageRect.size,
+                painter: SearchHighlightPainter(
+                  matchRects: matchRects,
+                  pageRect: pageRect,
+                  page: page,
+                  currentMatchIndex: currentMatchIndex,
+                  searchMatches: searchMatches,
+                  totalMatches: _textSearcher?.matches ?? [],
+                ),
+              );
+            },
+          ),
+        
+        // Render existing annotations - allow taps in pan mode for annotation selection
         LayoutBuilder(
           builder: (context, constraints) {
             final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
             return GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTapUp: _isToolActive ? null : (details) {
-                // Only handle taps when no tool is active
-                final tapPos = details.localPosition;
-                final normalizedTapPos = PdfAnnotation.toNormalizedPoint(tapPos, pageSize);
-                final hitRadius = 0.03; // 3% of page size for easier tapping
-                
-                // In pan mode, check for annotation taps
-                if (_isPanMode) {
+                // Allow taps for annotation selection (even in pan mode)
+                  
+                  final tapPos = details.localPosition;
+                  final normalizedTapPos = PdfAnnotation.toNormalizedPoint(tapPos, pageSize);
+                  final hitRadius = 0.03; // 3% of page size for easier tapping
+                  
                   for (final annotation in pageAnnotations) {
                     // Check if any point is near the tap
                     for (final point in annotation.points) {
@@ -2159,13 +2263,12 @@ class _PdfReaderState extends State<PdfReader> {
                     }
                   }
                   
-                  // Tapped empty area in pan mode - just clear selection
-                  if (_selectedAnnotationId != null) {
-                    setState(() {
-                      _selectedAnnotationId = null;
-                      _annotationCommentPosition = null;
-                    });
-                  }
+                  // Tapped empty area - clear selection
+                if (_selectedAnnotationId != null) {
+                  setState(() {
+                    _selectedAnnotationId = null;
+                    _annotationCommentPosition = null;
+                  });
                 }
               },
               child: CustomPaint(
@@ -2673,5 +2776,100 @@ class AnnotationPainter extends CustomPainter {
   bool shouldRepaint(covariant AnnotationPainter oldDelegate) {
     return oldDelegate.annotations != annotations ||
            oldDelegate.selectedAnnotationId != selectedAnnotationId;
+  }
+}
+
+// Painter for search result highlighting
+class SearchHighlightPainter extends CustomPainter {
+  final List<List<PdfRect>> matchRects;
+  final Rect pageRect;
+  final PdfPage page;
+  final int? currentMatchIndex;
+  final List<PdfPageTextRange> searchMatches;
+  final List<PdfPageTextRange> totalMatches;
+
+  SearchHighlightPainter({
+    required this.matchRects,
+    required this.pageRect,
+    required this.page,
+    this.currentMatchIndex,
+    required this.searchMatches,
+    required this.totalMatches,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (matchRects.isEmpty) return;
+
+    final normalPaint = Paint()
+      ..color = Colors.yellow.withValues(alpha: 0.4)
+      ..style = PaintingStyle.fill;
+
+    final currentPaint = Paint()
+      ..color = Colors.orange.withValues(alpha: 0.6)
+      ..style = PaintingStyle.fill;
+
+    final borderPaint = Paint()
+      ..color = Colors.orange
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    // Draw all matches
+    for (int i = 0; i < matchRects.length; i++) {
+      final rects = matchRects[i];
+      final isCurrentMatch = _isCurrentMatch(i);
+      final paint = isCurrentMatch ? currentPaint : normalPaint;
+
+      for (final pdfRect in rects) {
+        // Convert PDF coordinates to widget coordinates
+        final rect = _convertPdfRectToWidget(pdfRect);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+          paint,
+        );
+        if (isCurrentMatch) {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+            borderPaint,
+          );
+        }
+      }
+    }
+  }
+
+  bool _isCurrentMatch(int localIndex) {
+    if (currentMatchIndex == null || totalMatches.isEmpty) return false;
+    
+    // Find the global index of this local match
+    int globalIndex = 0;
+    for (final match in totalMatches) {
+      if (match.pageNumber == page.pageNumber) {
+        if (searchMatches.indexOf(match) == localIndex) {
+          return globalIndex == currentMatchIndex;
+        }
+      }
+      globalIndex++;
+    }
+    return false;
+  }
+
+  Rect _convertPdfRectToWidget(PdfRect pdfRect) {
+    // PDF coordinates have origin at bottom-left, widget at top-left
+    // Scale from PDF page size to widget size
+    final scaleX = pageRect.width / page.width;
+    final scaleY = pageRect.height / page.height;
+
+    final left = pdfRect.left * scaleX;
+    final top = (page.height - pdfRect.top) * scaleY;
+    final right = pdfRect.right * scaleX;
+    final bottom = (page.height - pdfRect.bottom) * scaleY;
+
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
+  @override
+  bool shouldRepaint(covariant SearchHighlightPainter oldDelegate) {
+    return oldDelegate.matchRects != matchRects ||
+           oldDelegate.currentMatchIndex != currentMatchIndex;
   }
 }
