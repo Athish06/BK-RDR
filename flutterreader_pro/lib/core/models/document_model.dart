@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
+
 class DocumentModel {
   final String id;
   final String title;
-  final String filePath;
+  final String filePath; // Public URL for the PDF
+  final String? supabasePath; // Storage path in Supabase bucket
   final String originalName;
   final int fileSize;
   final DateTime dateAdded;
@@ -9,11 +12,16 @@ class DocumentModel {
   final double readingProgress;
   final bool isFavorite;
   final String status; // 'new', 'in_progress', 'completed'
+  final String mimeType;
+  final int? pageCount;
+  final int lastPage;
+  final String? folderId;
 
   DocumentModel({
     required this.id,
     required this.title,
     required this.filePath,
+    this.supabasePath,
     required this.originalName,
     required this.fileSize,
     required this.dateAdded,
@@ -21,20 +29,35 @@ class DocumentModel {
     this.readingProgress = 0.0,
     this.isFavorite = false,
     this.status = 'new',
+    this.mimeType = 'application/pdf',
+    this.pageCount,
+    this.lastPage = 1,
+    this.folderId,
   });
+
+  // Convenience getters
+  bool get isNew => status == 'new';
+  bool get isInProgress => status == 'in_progress';
+  bool get isCompleted => status == 'completed';
+  bool get hasProgress => readingProgress > 0 && readingProgress < 1;
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'title': title,
-      'filePath': filePath,
-      'originalName': originalName,
-      'fileSize': fileSize,
-      'dateAdded': dateAdded.toIso8601String(),
-      'lastOpened': lastOpenedFormatted, // Use formatted string for UI
-      'readingProgress': readingProgress,
-      'isFavorite': isFavorite,
+      'file_path': filePath,
+      'supabase_path': supabasePath,
+      'original_name': originalName,
+      'file_size': fileSize,
+      'created_at': dateAdded.toIso8601String(),
+      'last_opened': lastOpened.toIso8601String(),
+      'reading_progress': readingProgress,
+      'is_favorite': isFavorite,
       'status': status,
+      'mime_type': mimeType,
+      'page_count': pageCount,
+      'last_page': lastPage,
+      'folder_id': folderId,
     };
   }
 
@@ -43,13 +66,18 @@ class DocumentModel {
       id: json['id'] ?? '',
       title: json['title'] ?? '',
       filePath: json['file_path'] ?? json['filePath'] ?? '',
+      supabasePath: json['supabase_path'] ?? json['storage_path'],
       originalName: json['original_name'] ?? json['originalName'] ?? '',
       fileSize: json['file_size'] ?? json['fileSize'] ?? 0,
       dateAdded: DateTime.tryParse(json['created_at'] ?? json['dateAdded'] ?? '') ?? DateTime.now(),
-      lastOpened: DateTime.tryParse(json['last_opened'] ?? json['lastOpened'] ?? '') ?? DateTime.now(),
+      lastOpened: DateTime.tryParse(json['last_opened'] ?? json['last_opened_at'] ?? json['lastOpened'] ?? '') ?? DateTime.now(),
       readingProgress: (json['reading_progress'] ?? json['readingProgress'] ?? 0.0).toDouble(),
       isFavorite: json['is_favorite'] ?? json['isFavorite'] ?? false,
       status: json['status'] ?? 'new',
+      mimeType: json['mime_type'] ?? 'application/pdf',
+      pageCount: json['page_count'],
+      lastPage: json['last_page'] ?? 1,
+      folderId: json['folder_id'],
     );
   }
 
@@ -57,6 +85,7 @@ class DocumentModel {
     String? id,
     String? title,
     String? filePath,
+    String? supabasePath,
     String? originalName,
     int? fileSize,
     DateTime? dateAdded,
@@ -64,11 +93,16 @@ class DocumentModel {
     double? readingProgress,
     bool? isFavorite,
     String? status,
+    String? mimeType,
+    int? pageCount,
+    int? lastPage,
+    String? folderId,
   }) {
     return DocumentModel(
       id: id ?? this.id,
       title: title ?? this.title,
       filePath: filePath ?? this.filePath,
+      supabasePath: supabasePath ?? this.supabasePath,
       originalName: originalName ?? this.originalName,
       fileSize: fileSize ?? this.fileSize,
       dateAdded: dateAdded ?? this.dateAdded,
@@ -76,31 +110,16 @@ class DocumentModel {
       readingProgress: readingProgress ?? this.readingProgress,
       isFavorite: isFavorite ?? this.isFavorite,
       status: status ?? this.status,
+      mimeType: mimeType ?? this.mimeType,
+      pageCount: pageCount ?? this.pageCount,
+      lastPage: lastPage ?? this.lastPage,
+      folderId: folderId ?? this.folderId,
     );
   }
 
-  // Helper methods
-  String get formattedFileSize {
-    if (fileSize < 1024) return '$fileSize B';
-    if (fileSize < 1024 * 1024) return '${(fileSize / 1024).toStringAsFixed(1)} KB';
-    if (fileSize < 1024 * 1024 * 1024) return '${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB';
-    return '${(fileSize / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-
-  String get lastOpenedFormatted {
-    final now = DateTime.now();
-    final difference = now.difference(lastOpened);
-
-    if (difference.inMinutes < 1) return 'Just now';
-    if (difference.inMinutes < 60) return '${difference.inMinutes} min ago';
-    if (difference.inHours < 24) return '${difference.inHours} hours ago';
-    if (difference.inDays < 7) return '${difference.inDays} days ago';
-    return '${(difference.inDays / 7).floor()} weeks ago';
-  }
-
-  String get progressStatus {
-    if (readingProgress == 0) return 'new';
-    if (readingProgress >= 100) return 'completed';
-    return 'in_progress';
+  @override
+  String toString() {
+    return 'DocumentModel(id: $id, title: $title, progress: ${(readingProgress * 100).toInt()}%)';
   }
 }
+

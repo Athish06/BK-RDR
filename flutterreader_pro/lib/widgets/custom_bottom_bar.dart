@@ -25,7 +25,7 @@ class CustomBottomBar extends StatefulWidget {
     this.variant = CustomBottomBarVariant.standard,
     this.currentIndex = 0,
     this.onTap,
-    this.showLabels = true,
+    this.showLabels = false,
     this.elevation,
     this.backgroundColor,
     this.enableHapticFeedback = true,

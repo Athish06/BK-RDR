@@ -24,6 +24,11 @@ class PdfReader extends StatefulWidget {
 }
 
 class _PdfReaderState extends State<PdfReader> {
+  // Services
+  final AnnotationService _annotationService = AnnotationService();
+  final DocumentService _documentService = DocumentService();
+  bool _hasUnsavedAnnotations = false;
+  
   // PDF state
   int _currentPage = 1;
   int _totalPages = 0;
@@ -91,7 +96,31 @@ class _PdfReaderState extends State<PdfReader> {
     if (args is DocumentModel && !_hasLoaded) {
       _document = args;
       _loadPdf();
+      _loadAnnotationsFromService(); // Load saved annotations
+      _updateDocumentStatus(); // Mark as in_progress when opened
       _hasLoaded = true;
+    }
+  }
+
+  /// Update document status to in_progress and set last opened
+  Future<void> _updateDocumentStatus() async {
+    if (_document == null) return;
+    
+    try {
+      // Update status to in_progress if it's new
+      if (_document!.status == 'new') {
+        await _documentService.updateDocument(_document!.copyWith(status: 'in_progress'));
+        print('📖 Document status updated to in_progress');
+      }
+      
+      // Update last opened time
+      await _documentService.updateReadingProgress(
+        _document!.id,
+        _document!.readingProgress,
+        _document!.lastPage,
+      );
+    } catch (e) {
+      print('❌ Error updating document status: $e');
     }
   }
 
@@ -216,6 +245,381 @@ class _PdfReaderState extends State<PdfReader> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
+  /// Load annotations from service after document is loaded
+  Future<void> _loadAnnotationsFromService() async {
+    if (_document == null) return;
+    
+    try {
+      final annotations = await _annotationService.loadAnnotationsForDocument(
+        _document!.id,
+        _document!.title,
+      );
+      
+      // Convert AnnotationData to PdfAnnotation for display
+      final pdfAnnotations = annotations.map((a) => _convertToPdfAnnotation(a)).toList();
+      
+      if (mounted) {
+        setState(() {
+          _annotations.addAll(pdfAnnotations);
+        });
+        print('✅ Loaded ${pdfAnnotations.length} annotations from service');
+      }
+    } catch (e) {
+      print('❌ Error loading annotations: $e');
+    }
+  }
+
+  /// Convert AnnotationData to PdfAnnotation
+  PdfAnnotation _convertToPdfAnnotation(AnnotationData data) {
+    // Parse points from position data
+    final points = <Offset>[];
+    if (data.position['points'] != null) {
+      for (final p in data.position['points'] as List) {
+        points.add(Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble()));
+      }
+    }
+    
+    // Parse annotation type
+    AnnotationType type;
+    switch (data.type) {
+      case 'highlight':
+        type = AnnotationType.highlight;
+        break;
+      case 'textHighlight':
+        type = AnnotationType.textHighlight;
+        break;
+      case 'underline':
+        type = AnnotationType.underline;
+        break;
+      case 'drawing':
+        type = AnnotationType.drawing;
+        break;
+      case 'text':
+        type = AnnotationType.text;
+        break;
+      case 'note':
+        type = AnnotationType.text;
+        break;
+      default:
+        type = AnnotationType.highlight;
+    }
+    
+    return PdfAnnotation(
+      id: data.id,
+      pageNumber: data.pageNumber,
+      type: type,
+      color: _hexToColor(data.color),
+      points: points,
+      textRanges: [],
+      linkedNote: data.content,
+    );
+  }
+
+  /// Convert hex color string to Color
+  Color _hexToColor(String hex) {
+    try {
+      hex = hex.replaceAll('#', '');
+      if (hex.length == 6) {
+        hex = 'FF$hex';
+      }
+      return Color(int.parse(hex, radix: 16));
+    } catch (e) {
+      return Colors.yellow;
+    }
+  }
+
+  /// Convert Color to hex string
+  String _colorToHex(Color color) {
+    return '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+  }
+
+  /// Save annotation to local storage via service
+  Future<void> _saveAnnotationToLocal(PdfAnnotation annotation) async {
+    if (_document == null) return;
+    
+    // Convert points to storable format
+    final pointsList = annotation.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList();
+    
+    await _annotationService.addAnnotation(
+      documentId: _document!.id,
+      documentTitle: _document!.title,
+      pageNumber: annotation.pageNumber,
+      type: annotation.type.name,
+      content: annotation.linkedNote,
+      color: _colorToHex(annotation.color),
+      position: {'points': pointsList},
+      strokeWidth: 2.0,
+    );
+    
+    setState(() {
+      _hasUnsavedAnnotations = true;
+    });
+  }
+
+  /// Save all annotations to Supabase and close
+  Future<void> _saveAndClose() async {
+    // First, check if user is on the last page - ask about marking as finished
+    final bool isOnLastPage = _currentPage >= _totalPages && _totalPages > 0;
+    
+    if (isOnLastPage) {
+      final shouldMarkFinished = await _showFinishedDialog();
+      if (shouldMarkFinished == true) {
+        await _markDocumentAsFinished();
+      }
+    }
+    
+    // Ask for the last page they've read
+    final lastPageRead = await _showLastPageDialog();
+    if (lastPageRead == null) return; // User cancelled
+    
+    // Update reading progress
+    await _updateReadingProgress(lastPageRead);
+    
+    // If no annotations, just close
+    if (_annotations.isEmpty) {
+      Navigator.pop(context);
+      return;
+    }
+    
+    // Show saving dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: Row(
+          children: [
+            CircularProgressIndicator(color: AppTheme.accentColor),
+            SizedBox(width: 16),
+            Text('Saving annotations...', style: TextStyle(color: AppTheme.textPrimary)),
+          ],
+        ),
+      ),
+    );
+    
+    try {
+      // Sync all annotations to Supabase
+      final success = await _annotationService.saveAndClose();
+      
+      if (mounted) {
+        Navigator.pop(context); // Close saving dialog
+        
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Saved successfully'),
+              backgroundColor: AppTheme.successColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          Navigator.pop(context); // Close PDF reader
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save annotations'),
+              backgroundColor: AppTheme.errorColor,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close saving dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: AppTheme.errorColor,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Show dialog asking about last page read
+  Future<int?> _showLastPageDialog() async {
+    final controller = TextEditingController(text: _currentPage.toString());
+    
+    return showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.bookmark_outline, color: AppTheme.accentColor),
+            SizedBox(width: 12),
+            Text('Save Reading Progress', style: TextStyle(color: AppTheme.textPrimary)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'What page did you finish reading?',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              style: TextStyle(color: AppTheme.textPrimary, fontSize: 18),
+              decoration: InputDecoration(
+                hintText: 'Page number',
+                hintStyle: TextStyle(color: AppTheme.textSecondary),
+                filled: true,
+                fillColor: AppTheme.primaryDark,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                suffixText: 'of $_totalPages',
+                suffixStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final page = int.tryParse(controller.text) ?? _currentPage;
+              final validPage = page.clamp(1, _totalPages > 0 ? _totalPages : page);
+              Navigator.pop(context, validPage);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show dialog asking if user wants to mark book as finished
+  Future<bool?> _showFinishedDialog() async {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.celebration_rounded, color: Colors.amber, size: 28),
+            SizedBox(width: 12),
+            Text('Congratulations! 🎉', style: TextStyle(color: AppTheme.textPrimary)),
+          ],
+        ),
+        content: Text(
+          'You\'ve reached the last page! Would you like to mark this book as finished?',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Not Yet', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.successColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text('Mark as Finished'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Mark document as finished
+  Future<void> _markDocumentAsFinished() async {
+    if (_document == null) return;
+    
+    try {
+      await _documentService.updateDocument(_document!.copyWith(
+        status: 'completed',
+        readingProgress: 1.0,
+        lastPage: _totalPages,
+      ));
+      print('✅ Document marked as finished');
+    } catch (e) {
+      print('❌ Error marking document as finished: $e');
+    }
+  }
+
+  /// Update reading progress based on last page read
+  Future<void> _updateReadingProgress(int lastPage) async {
+    if (_document == null || _totalPages <= 0) return;
+    
+    final progress = lastPage / _totalPages;
+    
+    try {
+      await _documentService.updateReadingProgress(
+        _document!.id,
+        progress,
+        lastPage,
+      );
+      print('📊 Progress updated: ${(progress * 100).toInt()}% (page $lastPage of $_totalPages)');
+    } catch (e) {
+      print('❌ Error updating progress: $e');
+    }
+  }
+
+  /// Show confirmation dialog when user tries to leave without saving
+  Future<bool> _onWillPop() async {
+    if (!_hasUnsavedAnnotations || _annotations.isEmpty) {
+      return true;
+    }
+    
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.surfaceColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Unsaved Annotations', style: TextStyle(color: AppTheme.textPrimary)),
+        content: Text(
+          'You have unsaved annotations. What would you like to do?',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
+            child: Text('Discard', style: TextStyle(color: Colors.red)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'cancel'),
+            child: Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentColor),
+            onPressed: () => Navigator.pop(context, 'save'),
+            child: Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == 'save') {
+      await _saveAndClose();
+      return false; // We handle navigation in _saveAndClose
+    } else if (result == 'discard') {
+      await _annotationService.clearLocalAnnotations();
+      return true;
+    }
+    
+    return false; // Cancel - stay on page
+  }
+
   void _setupAutoHideControls() {
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted && _showControls) {
@@ -265,14 +669,17 @@ class _PdfReaderState extends State<PdfReader> {
         _showZoomControls = false;
         _selectedAnnotationId = null;
         _annotationCommentPosition = null;
+        // Keep top controls visible even when tool is active
+        _showControls = true;
       });
       return; // Don't toggle controls, keep tool active
     }
     
-    // If any overlay is open (no tool active), close all controls
+    // Toggle floating navbar and overlays, but ALWAYS keep top bar visible
     if (_showFloatingNavbar || _showSearchOverlay || _showBookmarkPanel || _showNotesPanel) {
       setState(() {
-        _showControls = false;
+        // Always keep top controls (back, save) visible
+        _showControls = true;
         _showFloatingNavbar = false;
         _showAnnotationToolbar = false;
         _showSearchOverlay = false;
@@ -283,7 +690,7 @@ class _PdfReaderState extends State<PdfReader> {
         _annotationCommentPosition = null;
       });
     } else {
-      // Nothing visible, show controls
+      // Nothing visible, show all controls
       setState(() {
         _showControls = true;
         _showFloatingNavbar = true;
@@ -497,6 +904,14 @@ class _PdfReaderState extends State<PdfReader> {
       }
     }
     
+    // Save the completed annotation to local storage
+    if (_currentAnnotationId != null) {
+      final annotation = _annotations.where((a) => a.id == _currentAnnotationId).firstOrNull;
+      if (annotation != null && annotation.points.length > 1) {
+        _saveAnnotationToLocal(annotation);
+      }
+    }
+    
     print('🎨 Ending annotation: $_currentAnnotationId');
     setState(() {
       _isAnnotating = false;
@@ -582,21 +997,35 @@ class _PdfReaderState extends State<PdfReader> {
     HapticFeedback.selectionClick();
   }
   
-  // Enable pan mode
+  // Enable pan mode - allows panning and zooming PDF when activated
   void _togglePanMode() {
     setState(() {
       _isPanMode = !_isPanMode;
       if (_isPanMode) {
-        // Entering pan mode - disable tool but keep current selection for when exiting
+        // Entering pan mode - disable tool and show pan indicator
         _isToolActive = false;
-        _showFloatingNavbar = false;
         _showAnnotationToolbar = false;
-      } else {
-        // Exiting pan mode - restore controls
+        // Keep controls visible so user can see they're in pan mode
+        _showControls = true;
         _showFloatingNavbar = true;
+      } else {
+        // Exiting pan mode - restore normal state
+        _showFloatingNavbar = true;
+        _showControls = true;
       }
     });
     HapticFeedback.lightImpact();
+    
+    // Show feedback toast
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_isPanMode ? 'Pan mode enabled - drag to move around' : 'Pan mode disabled'),
+        duration: const Duration(seconds: 1),
+        backgroundColor: _isPanMode ? AppTheme.accentColor : AppTheme.surfaceColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
   
   // Show quick note dialog - can be linked to an annotation
@@ -1090,39 +1519,47 @@ class _PdfReaderState extends State<PdfReader> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.primaryDark,
-      body: Stack(
-        children: [
-          // PDF Content Area
-          GestureDetector(
-            // Always allow tap to toggle controls (tool stays active via _toggleControls logic)
-            onTap: _toggleControls,
-            onDoubleTap: _isToolActive ? null : () {
-              _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
-            },
-            onLongPress: _isToolActive ? null : () {
-              final RenderBox renderBox = context.findRenderObject() as RenderBox;
-              final position = renderBox.globalToLocal(
-                Offset(50.w, 30.h),
-              );
-              _addQuickNote(position);
-            },
-            child: Container(
-              width: double.infinity,
-              height: double.infinity,
-              child: _buildPdfContent(),
-            ),
-          ),
-            
-            // Top overlay with document info
-            if (_showControls)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _buildTopOverlay(),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldPop = await _onWillPop();
+        if (shouldPop && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.primaryDark,
+        body: Stack(
+          children: [
+            // PDF Content Area
+            GestureDetector(
+              // Always allow tap to toggle controls (tool stays active via _toggleControls logic)
+              onTap: _toggleControls,
+              onDoubleTap: _isToolActive ? null : () {
+                _handleZoomChange(_zoomLevel == 1.0 ? 2.0 : 1.0);
+              },
+              onLongPress: _isToolActive ? null : () {
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final position = renderBox.globalToLocal(
+                  Offset(50.w, 30.h),
+                );
+                _addQuickNote(position);
+              },
+              child: Container(
+                width: double.infinity,
+                height: double.infinity,
+                child: _buildPdfContent(),
               ),
+            ),
+            
+            // Top overlay with document info - ALWAYS VISIBLE
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _buildTopOverlay(),
+            ),
             
             // Annotation toolbar
             if (_showAnnotationToolbar)
@@ -1279,6 +1716,7 @@ class _PdfReaderState extends State<PdfReader> {
               _buildNotesPanel(),
           ],
         ),
+      ),
     );
   }
   
@@ -1534,6 +1972,34 @@ class _PdfReaderState extends State<PdfReader> {
           top: 25.h,
           right: 0,
           child: _buildSlideOutZoomControls(),
+        ),
+        
+        // Page indicator - always visible
+        Positioned(
+          bottom: _showFloatingNavbar ? 9.h : 2.h,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryDark.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: AppTheme.accentColor.withValues(alpha: 0.3),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                'Page $_currentPage of $_totalPages',
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
         ),
         
         // Main horizontal navbar at bottom center
@@ -2010,7 +2476,12 @@ class _PdfReaderState extends State<PdfReader> {
           child: Row(
             children: [
               GestureDetector(
-                onTap: () => Navigator.pop(context),
+                onTap: () async {
+                  final shouldPop = await _onWillPop();
+                  if (shouldPop && mounted) {
+                    Navigator.pop(context);
+                  }
+                },
                 child: Container(
                   padding: EdgeInsets.all(2.w),
                   decoration: BoxDecoration(
@@ -2045,6 +2516,46 @@ class _PdfReaderState extends State<PdfReader> {
                       ),
                     ),
                   ],
+                ),
+              ),
+              // Save button - always visible
+              GestureDetector(
+                onTap: _saveAndClose,
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 1.h),
+                  margin: EdgeInsets.only(right: 2.w),
+                  decoration: BoxDecoration(
+                    gradient: (_hasUnsavedAnnotations || _annotations.isNotEmpty)
+                        ? AppTheme.gradientDecoration().gradient
+                        : null,
+                    color: (_hasUnsavedAnnotations || _annotations.isNotEmpty)
+                        ? null
+                        : AppTheme.surfaceColor.withValues(alpha: 0.8),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CustomIconWidget(
+                        iconName: 'save',
+                        color: (_hasUnsavedAnnotations || _annotations.isNotEmpty)
+                            ? Colors.white
+                            : AppTheme.textPrimary,
+                        size: 16,
+                      ),
+                      SizedBox(width: 1.w),
+                      Text(
+                        'Save',
+                        style: TextStyle(
+                          color: (_hasUnsavedAnnotations || _annotations.isNotEmpty)
+                              ? Colors.white
+                              : AppTheme.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               GestureDetector(
@@ -2145,6 +2656,26 @@ class _PdfReaderState extends State<PdfReader> {
             setState(() {
                _totalPages = document.pages.length;
             });
+            
+            // Update page count in database if not set
+            if (_document != null && (_document!.pageCount == null || _document!.pageCount == 0)) {
+              _documentService.updateReadingProgress(
+                _document!.id,
+                _document!.readingProgress,
+                _document!.lastPage,
+                pageCount: document.pages.length,
+              );
+            }
+            
+            // Resume from last page if available
+            if (_document != null && _document!.lastPage > 1 && _document!.lastPage <= document.pages.length) {
+              Future.microtask(() {
+                if (controller.isReady) {
+                  controller.goToPage(pageNumber: _document!.lastPage);
+                  print('📖 Resuming from page ${_document!.lastPage}');
+                }
+              });
+            }
             
             // Initialize searcher after a frame to ensure controller is ready
             Future.microtask(() {
@@ -2474,6 +3005,11 @@ class _PdfReaderState extends State<PdfReader> {
                             points: highlightPoints,
                           );
                         });
+                        
+                        // Save to annotation service for sync
+                        if (highlightPoints.isNotEmpty) {
+                          _saveAnnotationToLocal(_annotations[index]);
+                        }
                       }
                     }
                     
@@ -2554,6 +3090,11 @@ class _PdfReaderState extends State<PdfReader> {
                             points: underlinePoints,
                           );
                         });
+                        
+                        // Save to annotation service for sync
+                        if (underlinePoints.isNotEmpty) {
+                          _saveAnnotationToLocal(_annotations[index]);
+                        }
                       }
                     }
                     

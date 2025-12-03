@@ -44,13 +44,109 @@ void main() async {
   runApp(MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // Check for unsaved annotations after the first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkUnsavedAnnotations();
+    });
+  }
+
+  Future<void> _checkUnsavedAnnotations() async {
+    try {
+      final annotationService = AnnotationService();
+      final hasUnsaved = await annotationService.hasUnsavedAnnotations();
+      
+      if (hasUnsaved && _navigatorKey.currentContext != null) {
+        final context = _navigatorKey.currentContext!;
+        
+        // Show dialog to user
+        final result = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            backgroundColor: AppTheme.surfaceColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(
+              'Unsaved Annotations Found',
+              style: TextStyle(color: AppTheme.textPrimary),
+            ),
+            content: Text(
+              'You have unsaved annotations from your last session. Would you like to save them to the cloud?',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, 'discard'),
+                child: Text('Discard', style: TextStyle(color: Colors.red)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentColor),
+                onPressed: () => Navigator.pop(context, 'save'),
+                child: Text('Save', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+        
+        if (result == 'save') {
+          // Show saving indicator
+          if (_navigatorKey.currentContext != null) {
+            showDialog(
+              context: _navigatorKey.currentContext!,
+              barrierDismissible: false,
+              builder: (context) => AlertDialog(
+                backgroundColor: AppTheme.surfaceColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                content: Row(
+                  children: [
+                    CircularProgressIndicator(color: AppTheme.accentColor),
+                    SizedBox(width: 16),
+                    Text('Saving annotations...', style: TextStyle(color: AppTheme.textPrimary)),
+                  ],
+                ),
+              ),
+            );
+            
+            final success = await annotationService.saveAndClose();
+            Navigator.pop(_navigatorKey.currentContext!); // Close saving dialog
+            
+            if (_navigatorKey.currentContext != null) {
+              ScaffoldMessenger.of(_navigatorKey.currentContext!).showSnackBar(
+                SnackBar(
+                  content: Text(success ? 'Annotations saved!' : 'Failed to save annotations'),
+                  backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          }
+        } else {
+          // Discard unsaved annotations
+          await annotationService.clearLocalAnnotations();
+        }
+      }
+    } catch (e) {
+      print('⚠️ Error checking unsaved annotations: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     print("🏗️ MyApp build called");
     return Sizer(builder: (context, orientation, screenType) {
       print("📏 Sizer builder called");
       return MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'flutterreader_pro',
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,

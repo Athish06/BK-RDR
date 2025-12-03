@@ -6,4 +6,7 @@ export '../theme/app_theme.dart';
 
 // Core services and models
 export 'services/document_service.dart';
+export 'services/folder_service.dart';
+export 'services/annotation_service.dart';
 export 'models/document_model.dart';
+export 'models/folder_model.dart';
