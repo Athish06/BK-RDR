@@ -18,7 +18,7 @@ class AppRoutes {
 
   static Map<String, WidgetBuilder> routes = {
     initial: (context) => const HomeDashboard(),
-    settings: (context) => const Settings(),
+    settings: (context) => const SettingsPage(),
     annotationTools: (context) => const AnnotationTools(),
     pdfLibrary: (context) => const PdfLibrary(),
     homeDashboard: (context) => const HomeDashboard(),

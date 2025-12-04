@@ -808,34 +808,252 @@ class _PdfLibraryState extends State<PdfLibrary> with SingleTickerProviderStateM
   }
 
   Widget _buildGridView(List<FolderModel> folders, List<DocumentModel> docs) {
-    return GridView.builder(
-      padding: EdgeInsets.all(5.w),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.72,
-        crossAxisSpacing: 3.w,
-        mainAxisSpacing: 2.h,
-      ),
-      itemCount: folders.length + docs.length,
-      itemBuilder: (context, index) {
-        if (index < folders.length) {
-          return _buildFolderGridItem(folders[index], index);
-        }
-        return _buildDocumentGridItem(docs[index - folders.length], index);
-      },
+    return CustomScrollView(
+      slivers: [
+        // Folders Section
+        if (folders.isNotEmpty) ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(5.w, 2.h, 5.w, 1.h),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.folder_rounded, color: Colors.amber, size: 20),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Folders',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${folders.length}',
+                      style: TextStyle(
+                        color: AppTheme.accentColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: 5.w),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 1.3,
+                crossAxisSpacing: 3.w,
+                mainAxisSpacing: 2.h,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildFolderGridItem(folders[index], index),
+                childCount: folders.length,
+              ),
+            ),
+          ),
+        ],
+        
+        // Documents Section
+        if (docs.isNotEmpty) ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(5.w, 3.h, 5.w, 1.h),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.description_rounded, color: AppTheme.accentColor, size: 20),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Documents',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${docs.length}',
+                      style: TextStyle(
+                        color: AppTheme.accentColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: 5.w),
+            sliver: SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 0.72,
+                crossAxisSpacing: 3.w,
+                mainAxisSpacing: 2.h,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildDocumentGridItem(docs[index], index),
+                childCount: docs.length,
+              ),
+            ),
+          ),
+        ],
+        
+        // Bottom padding
+        SliverPadding(padding: EdgeInsets.only(bottom: 10.h)),
+      ],
     );
   }
 
   Widget _buildListView(List<FolderModel> folders, List<DocumentModel> docs) {
-    return ListView.builder(
-      padding: EdgeInsets.all(5.w),
-      itemCount: folders.length + docs.length,
-      itemBuilder: (context, index) {
-        if (index < folders.length) {
-          return _buildFolderListItem(folders[index], index);
-        }
-        return _buildDocumentListItem(docs[index - folders.length], index);
-      },
+    return CustomScrollView(
+      slivers: [
+        // Folders Section
+        if (folders.isNotEmpty) ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(5.w, 2.h, 5.w, 1.h),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.folder_rounded, color: Colors.amber, size: 20),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Folders',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${folders.length}',
+                      style: TextStyle(
+                        color: AppTheme.accentColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: 5.w),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildFolderListItem(folders[index], index),
+                childCount: folders.length,
+              ),
+            ),
+          ),
+        ],
+        
+        // Documents Section
+        if (docs.isNotEmpty) ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(5.w, 3.h, 5.w, 1.h),
+            sliver: SliverToBoxAdapter(
+              child: Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(Icons.description_rounded, color: AppTheme.accentColor, size: 20),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Documents',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accentColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${docs.length}',
+                      style: TextStyle(
+                        color: AppTheme.accentColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: 5.w),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildDocumentListItem(docs[index], index),
+                childCount: docs.length,
+              ),
+            ),
+          ),
+        ],
+        
+        // Bottom padding
+        SliverPadding(padding: EdgeInsets.only(bottom: 10.h)),
+      ],
     );
   }
 

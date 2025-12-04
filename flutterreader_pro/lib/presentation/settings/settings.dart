@@ -1,465 +1,549 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:sizer/sizer.dart';
+import 'package:flutterreader_pro/core/services/settings_service.dart';
+import 'package:flutterreader_pro/presentation/theme_customization/theme_customization.dart';
+import 'package:flutterreader_pro/theme/app_theme.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/app_export.dart';
-import '../../widgets/custom_bottom_bar.dart';
-
-class Settings extends StatefulWidget {
-  const Settings({super.key});
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
 
   @override
-  State<Settings> createState() => _SettingsState();
+  State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsState extends State<Settings> {
-  // Settings state
-  bool _darkMode = true;
-  bool _autoSaveAnnotations = true;
-  bool _showPageNumbers = true;
-  bool _enableHaptics = true;
-  double _defaultZoom = 1.0;
-  String _defaultHighlightColor = 'Yellow';
+class _SettingsPageState extends State<SettingsPage> {
+  final SettingsService _settings = SettingsService();
+  bool _isLoading = true;
 
-  final List<String> _highlightColors = ['Yellow', 'Green', 'Blue', 'Pink', 'Orange'];
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    await _settings.init();
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.primaryDark,
-      body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            // App Bar
-            SliverAppBar(
-              floating: true,
-              backgroundColor: AppTheme.primaryDark,
-              elevation: 0,
-              leading: IconButton(
-                icon: Icon(Icons.arrow_back_ios, color: AppTheme.textPrimary),
-                onPressed: () => Navigator.pop(context),
-              ),
-              title: Text(
-                'Settings',
-                style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            
-            // Settings Content
-            SliverToBoxAdapter(
+      appBar: AppBar(
+        backgroundColor: AppTheme.surfaceColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Settings',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        centerTitle: true,
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.accentColor))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(height: 2.h),
-                  
                   // Appearance Section
-                  _buildSection(
-                    title: 'Appearance',
-                    children: [
-                      _buildSwitchTile(
-                        icon: Icons.dark_mode,
-                        title: 'Dark Mode',
-                        subtitle: 'Use dark theme',
-                        value: _darkMode,
-                        onChanged: (value) {
-                          setState(() => _darkMode = value);
-                          HapticFeedback.selectionClick();
-                        },
-                      ),
-                      _buildNavigationTile(
-                        icon: Icons.palette,
-                        title: 'Theme Customization',
-                        subtitle: 'Colors and visual style',
-                        onTap: () => Navigator.pushNamed(context, '/theme-customization'),
-                      ),
-                    ],
+                  _buildSectionHeader('Appearance'),
+                  const SizedBox(height: 12),
+                  _buildSettingsTile(
+                    icon: Icons.palette_outlined,
+                    iconColor: Colors.purple,
+                    title: 'Theme & Colors',
+                    subtitle: 'Customize app theme and accent colors',
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ThemeCustomization(),
+                        ),
+                      );
+                      // Refresh settings after returning
+                      await _settings.loadSettings();
+                      setState(() {});
+                    },
                   ),
-                  
-                  // Reading Section
-                  _buildSection(
-                    title: 'Reading',
-                    children: [
-                      _buildSwitchTile(
-                        icon: Icons.numbers,
-                        title: 'Show Page Numbers',
-                        subtitle: 'Display page numbers in reader',
-                        value: _showPageNumbers,
-                        onChanged: (value) {
-                          setState(() => _showPageNumbers = value);
-                          HapticFeedback.selectionClick();
-                        },
-                      ),
-                      _buildSliderTile(
-                        icon: Icons.zoom_in,
-                        title: 'Default Zoom',
-                        value: _defaultZoom,
-                        min: 0.5,
-                        max: 2.0,
-                        onChanged: (value) {
-                          setState(() => _defaultZoom = value);
-                        },
-                      ),
-                    ],
+
+                  const SizedBox(height: 24),
+
+                  // Reader Section
+                  _buildSectionHeader('Reader'),
+                  const SizedBox(height: 12),
+                  _buildColorPickerTile(
+                    icon: Icons.highlight,
+                    iconColor: Colors.amber,
+                    title: 'Default Highlight Color',
+                    subtitle: 'Color used for new highlights',
+                    currentColor: _settings.defaultHighlightColorAsColor,
+                    onColorChanged: (color) async {
+                      // Find the color name from the color value
+                      final colorName = _getColorNameFromColor(color);
+                      await _settings.setDefaultHighlightColor(colorName);
+                      setState(() {});
+                    },
                   ),
-                  
-                  // Annotations Section
-                  _buildSection(
-                    title: 'Annotations',
-                    children: [
-                      _buildSwitchTile(
-                        icon: Icons.save,
-                        title: 'Auto-save Annotations',
-                        subtitle: 'Automatically save changes',
-                        value: _autoSaveAnnotations,
-                        onChanged: (value) {
-                          setState(() => _autoSaveAnnotations = value);
-                          HapticFeedback.selectionClick();
-                        },
-                      ),
-                      _buildDropdownTile(
-                        icon: Icons.color_lens,
-                        title: 'Default Highlight Color',
-                        value: _defaultHighlightColor,
-                        options: _highlightColors,
-                        onChanged: (value) {
-                          setState(() => _defaultHighlightColor = value!);
-                          HapticFeedback.selectionClick();
-                        },
-                      ),
+                  const SizedBox(height: 8),
+                  _buildDropdownTile<String>(
+                    icon: Icons.swap_vert_rounded,
+                    iconColor: Colors.blue,
+                    title: 'Scroll Direction',
+                    subtitle: 'How pages scroll in the reader',
+                    value: _settings.scrollDirection,
+                    items: const [
+                      DropdownMenuItem(value: 'vertical', child: Text('Vertical')),
+                      DropdownMenuItem(value: 'horizontal', child: Text('Horizontal')),
                     ],
+                    onChanged: (value) async {
+                      if (value != null) {
+                        await _settings.setScrollDirection(value);
+                        setState(() {});
+                      }
+                    },
                   ),
-                  
-                  // General Section
-                  _buildSection(
-                    title: 'General',
-                    children: [
-                      _buildSwitchTile(
-                        icon: Icons.vibration,
-                        title: 'Haptic Feedback',
-                        subtitle: 'Vibration on interactions',
-                        value: _enableHaptics,
-                        onChanged: (value) {
-                          setState(() => _enableHaptics = value);
-                          if (value) HapticFeedback.selectionClick();
-                        },
-                      ),
+                  const SizedBox(height: 8),
+                  _buildSwitchTile(
+                    icon: Icons.numbers_rounded,
+                    iconColor: Colors.green,
+                    title: 'Show Page Numbers',
+                    subtitle: 'Display page indicator while reading',
+                    value: _settings.showPageNumbers,
+                    onChanged: (value) async {
+                      await _settings.setShowPageNumbers(value);
+                      setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _buildDropdownTile<double>(
+                    icon: Icons.zoom_in_rounded,
+                    iconColor: Colors.orange,
+                    title: 'Default Zoom',
+                    subtitle: 'Initial zoom level when opening PDFs',
+                    value: _settings.defaultZoom,
+                    items: const [
+                      DropdownMenuItem(value: 1.0, child: Text('100%')),
+                      DropdownMenuItem(value: 1.25, child: Text('125%')),
+                      DropdownMenuItem(value: 1.5, child: Text('150%')),
+                      DropdownMenuItem(value: 1.75, child: Text('175%')),
+                      DropdownMenuItem(value: 2.0, child: Text('200%')),
                     ],
+                    onChanged: (value) async {
+                      if (value != null) {
+                        await _settings.setDefaultZoom(value);
+                        setState(() {});
+                      }
+                    },
                   ),
-                  
+
+                  const SizedBox(height: 24),
+
+                  // Behavior Section
+                  _buildSectionHeader('Behavior'),
+                  const SizedBox(height: 12),
+                  _buildSwitchTile(
+                    icon: Icons.vibration_rounded,
+                    iconColor: Colors.red,
+                    title: 'Haptic Feedback',
+                    subtitle: 'Vibrate on certain actions',
+                    value: _settings.enableHaptics,
+                    onChanged: (value) async {
+                      await _settings.setEnableHaptics(value);
+                      setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSwitchTile(
+                    icon: Icons.brightness_high_rounded,
+                    iconColor: Colors.yellow,
+                    title: 'Keep Screen On',
+                    subtitle: 'Prevent screen from turning off while reading',
+                    value: _settings.keepScreenOn,
+                    onChanged: (value) async {
+                      await _settings.setKeepScreenOn(value);
+                      setState(() {});
+                    },
+                  ),
+
+                  const SizedBox(height: 24),
+
                   // About Section
-                  _buildSection(
-                    title: 'About',
-                    children: [
-                      _buildInfoTile(
-                        icon: Icons.info_outline,
-                        title: 'Version',
-                        subtitle: 'FlutterReader Pro v1.0.0',
-                      ),
-                      _buildNavigationTile(
-                        icon: Icons.privacy_tip_outlined,
-                        title: 'Privacy Policy',
-                        subtitle: 'View privacy information',
-                        onTap: () => _showPrivacyPolicy(),
-                      ),
-                      _buildActionTile(
-                        icon: Icons.restore,
-                        title: 'Reset Settings',
-                        subtitle: 'Restore default settings',
-                        isDestructive: true,
-                        onTap: () => _showResetDialog(),
-                      ),
-                    ],
+                  _buildSectionHeader('About'),
+                  const SizedBox(height: 12),
+                  _buildSettingsTile(
+                    icon: Icons.info_outline_rounded,
+                    iconColor: Colors.teal,
+                    title: 'App Version',
+                    subtitle: '1.0.0',
+                    onTap: null,
                   ),
-                  
-                  SizedBox(height: 10.h),
+                  const SizedBox(height: 8),
+                  _buildSettingsTile(
+                    icon: Icons.privacy_tip_outlined,
+                    iconColor: Colors.indigo,
+                    title: 'Privacy Policy',
+                    subtitle: 'Read our privacy policy',
+                    onTap: () => _launchUrl('https://example.com/privacy'),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSettingsTile(
+                    icon: Icons.description_outlined,
+                    iconColor: Colors.cyan,
+                    title: 'Terms of Service',
+                    subtitle: 'Read our terms of service',
+                    onTap: () => _launchUrl('https://example.com/terms'),
+                  ),
+
+                  const SizedBox(height: 32),
+
+                  // Reset Button
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _showResetDialog,
+                      icon: const Icon(Icons.refresh_rounded, color: Colors.red),
+                      label: const Text(
+                        'Reset All Settings',
+                        style: TextStyle(color: Colors.red, fontSize: 16),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 32),
                 ],
               ),
             ),
-          ],
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: AppTheme.accentColor,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
         ),
-      ),
-      bottomNavigationBar: const CustomBottomBar(
-        variant: CustomBottomBarVariant.magnetic,
-        currentIndex: 3,
-        enableHapticFeedback: true,
       ),
     );
   }
 
-  Widget _buildSection({required String title, required List<Widget> children}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.5.h),
-          child: Text(
-            title,
-            style: AppTheme.darkTheme.textTheme.titleSmall?.copyWith(
-              color: AppTheme.accentColor,
-              fontWeight: FontWeight.w600,
-            ),
+  Widget _buildSettingsTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+  }) {
+    return Material(
+      color: AppTheme.surfaceColor,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (onTap != null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+            ],
           ),
         ),
-        Container(
-          margin: EdgeInsets.symmetric(horizontal: 4.w),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceColor,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            children: children,
-          ),
-        ),
-        SizedBox(height: 2.h),
-      ],
+      ),
     );
   }
 
   Widget _buildSwitchTile({
     required IconData icon,
+    required Color iconColor,
     required String title,
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
-    return ListTile(
-      leading: Icon(icon, color: AppTheme.accentColor),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-          color: AppTheme.textPrimary,
-          fontWeight: FontWeight.w500,
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(12),
       ),
-      subtitle: Text(
-        subtitle,
-        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.textSecondary,
-        ),
-      ),
-      trailing: Switch(
-        value: value,
-        onChanged: onChanged,
-        activeColor: AppTheme.accentColor,
-      ),
-    );
-  }
-
-  Widget _buildNavigationTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Icon(icon, color: AppTheme.accentColor),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-          color: AppTheme.textPrimary,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.textSecondary,
-        ),
-      ),
-      trailing: Icon(Icons.chevron_right, color: AppTheme.textSecondary),
-      onTap: () {
-        HapticFeedback.lightImpact();
-        onTap();
-      },
-    );
-  }
-
-  Widget _buildSliderTile({
-    required IconData icon,
-    required String title,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 1.h),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.all(16),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, color: AppTheme.accentColor),
-              SizedBox(width: 4.w),
-              Text(
-                title,
-                style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                  color: AppTheme.textPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                '${(value * 100).toInt()}%',
-                style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                  color: AppTheme.accentColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 22),
           ),
-          Slider(
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
             value: value,
-            min: min,
-            max: max,
             onChanged: onChanged,
             activeColor: AppTheme.accentColor,
-            inactiveColor: AppTheme.textSecondary.withValues(alpha: 0.2),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDropdownTile({
+  Widget _buildDropdownTile<T>({
     required IconData icon,
-    required String title,
-    required String value,
-    required List<String> options,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return ListTile(
-      leading: Icon(icon, color: AppTheme.accentColor),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-          color: AppTheme.textPrimary,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      trailing: DropdownButton<String>(
-        value: value,
-        items: options.map((option) {
-          return DropdownMenuItem(
-            value: option,
-            child: Text(
-              option,
-              style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          );
-        }).toList(),
-        onChanged: onChanged,
-        dropdownColor: AppTheme.surfaceColor,
-        underline: const SizedBox(),
-      ),
-    );
-  }
-
-  Widget _buildInfoTile({
-    required IconData icon,
+    required Color iconColor,
     required String title,
     required String subtitle,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
   }) {
-    return ListTile(
-      leading: Icon(icon, color: AppTheme.accentColor),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-          color: AppTheme.textPrimary,
-          fontWeight: FontWeight.w500,
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(12),
       ),
-      subtitle: Text(
-        subtitle,
-        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.textSecondary,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-    bool isDestructive = false,
-  }) {
-    final color = isDestructive ? AppTheme.errorColor : AppTheme.accentColor;
-    
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(
-        title,
-        style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-          color: isDestructive ? color : AppTheme.textPrimary,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: AppTheme.darkTheme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.textSecondary,
-        ),
-      ),
-      onTap: () {
-        HapticFeedback.lightImpact();
-        onTap();
-      },
-    );
-  }
-
-  void _showPrivacyPolicy() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surfaceColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        padding: EdgeInsets.all(4.w),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Privacy Policy',
-              style: AppTheme.darkTheme.textTheme.titleLarge?.copyWith(
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.w600,
-              ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
             ),
-            SizedBox(height: 2.h),
-            Text(
-              'FlutterReader Pro respects your privacy. All your documents and annotations are stored locally on your device. We do not collect, store, or share any personal data.',
-              style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-                color: AppTheme.textSecondary,
-              ),
-            ),
-            SizedBox(height: 3.h),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accentColor,
-                  padding: EdgeInsets.symmetric(vertical: 1.5.h),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            child: Icon(icon, color: iconColor, size: 22),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                child: const Text('Close', style: TextStyle(color: Colors.white)),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryDark,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: DropdownButton<T>(
+              value: value,
+              items: items,
+              onChanged: onChanged,
+              dropdownColor: AppTheme.surfaceColor,
+              underline: const SizedBox(),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              icon: Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Colors.white.withOpacity(0.5),
               ),
             ),
-            SizedBox(height: 2.h),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildColorPickerTile({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String subtitle,
+    required Color currentColor,
+    required ValueChanged<Color> onColorChanged,
+  }) {
+    final colors = [
+      Colors.yellow,
+      Colors.blue,
+      Colors.green,
+      Colors.red,
+      Colors.purple,
+      Colors.orange,
+      Colors.pink,
+      Colors.teal,
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: colors.map((color) {
+              final isSelected = currentColor.value == color.value;
+              return GestureDetector(
+                onTap: () => onColorChanged(color),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: isSelected
+                        ? Border.all(color: Colors.white, width: 3)
+                        : null,
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                              color: color.withOpacity(0.5),
+                              blurRadius: 8,
+                              spreadRadius: 2,
+                            )
+                          ]
+                        : null,
+                  ),
+                  child: isSelected
+                      ? const Icon(Icons.check, color: Colors.white, size: 20)
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 
   void _showResetDialog() {
@@ -468,35 +552,55 @@ class _SettingsState extends State<Settings> {
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surfaceColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Reset Settings?',
-          style: AppTheme.darkTheme.textTheme.titleMedium?.copyWith(
-            color: AppTheme.textPrimary,
-            fontWeight: FontWeight.w600,
-          ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+            SizedBox(width: 12),
+            Text(
+              'Reset Settings',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+          ],
         ),
-        content: Text(
-          'This will restore all settings to their default values. This action cannot be undone.',
-          style: AppTheme.darkTheme.textTheme.bodyMedium?.copyWith(
-            color: AppTheme.textSecondary,
-          ),
+        content: const Text(
+          'This will reset all settings to their default values. This action cannot be undone.',
+          style: TextStyle(color: Colors.white70, fontSize: 15),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text(
               'Cancel',
-              style: TextStyle(color: AppTheme.textSecondary),
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
             ),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _resetSettings();
+          ElevatedButton(
+            onPressed: () async {
+              await _settings.resetToDefaults();
+              if (mounted) {
+                Navigator.pop(context);
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('Settings reset to defaults'),
+                    backgroundColor: AppTheme.accentColor,
+                    behavior: SnackBarBehavior.floating,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                );
+              }
             },
-            child: Text(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
               'Reset',
-              style: TextStyle(color: AppTheme.errorColor),
+              style: TextStyle(color: Colors.white),
             ),
           ),
         ],
@@ -504,23 +608,17 @@ class _SettingsState extends State<Settings> {
     );
   }
 
-  void _resetSettings() {
-    setState(() {
-      _darkMode = true;
-      _autoSaveAnnotations = true;
-      _showPageNumbers = true;
-      _enableHaptics = true;
-      _defaultZoom = 1.0;
-      _defaultHighlightColor = 'Yellow';
-    });
-    
-    HapticFeedback.mediumImpact();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Settings have been reset'),
-        backgroundColor: AppTheme.accentColor,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  String _getColorNameFromColor(Color color) {
+    final colorMap = {
+      Colors.yellow.value: 'Yellow',
+      Colors.blue.value: 'Blue',
+      Colors.green.value: 'Green',
+      Colors.red.value: 'Red',
+      Colors.purple.value: 'Purple',
+      Colors.orange.value: 'Orange',
+      Colors.pink.value: 'Pink',
+      Colors.teal.value: 'Cyan',
+    };
+    return colorMap[color.value] ?? 'Yellow';
   }
 }

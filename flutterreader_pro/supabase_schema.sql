@@ -6,6 +6,49 @@
 -- =============================================================================
 
 -- =============================================================================
+-- 0. USER SETTINGS TABLE - New table for app settings
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id TEXT NOT NULL UNIQUE,
+    
+    -- Appearance
+    dark_mode BOOLEAN DEFAULT true,
+    theme_name TEXT DEFAULT 'midnight',
+    accent_color TEXT DEFAULT '#6366F1',
+    
+    -- Reading
+    show_page_numbers BOOLEAN DEFAULT true,
+    page_number_duration INTEGER DEFAULT 3,
+    default_zoom DOUBLE PRECISION DEFAULT 1.0,
+    scroll_direction TEXT DEFAULT 'vertical' CHECK (scroll_direction IN ('vertical', 'horizontal')),
+    keep_screen_on BOOLEAN DEFAULT true,
+    double_tap_zoom DOUBLE PRECISION DEFAULT 2.0,
+    
+    -- Annotations
+    auto_save_annotations BOOLEAN DEFAULT true,
+    default_highlight_color TEXT DEFAULT 'Yellow',
+    
+    -- General
+    enable_haptics BOOLEAN DEFAULT true,
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create index for quick lookup
+CREATE INDEX IF NOT EXISTS idx_user_settings_device ON public.user_settings(device_id);
+
+-- Enable Row Level Security (optional - for multi-user)
+ALTER TABLE public.user_settings ENABLE ROW LEVEL SECURITY;
+
+-- Create policy (allow all for now since we use device_id)
+DROP POLICY IF EXISTS "Allow all access to user_settings" ON public.user_settings;
+CREATE POLICY "Allow all access to user_settings" ON public.user_settings FOR ALL USING (true);
+
+-- =============================================================================
 -- 1. DOCUMENTS TABLE - Remove Google Drive columns
 -- =============================================================================
 

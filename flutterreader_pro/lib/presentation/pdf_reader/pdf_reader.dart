@@ -7,7 +7,10 @@ import 'package:universal_io/io.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:dio/dio.dart';
 import 'dart:typed_data';
+import 'dart:async';
 import 'models/pdf_annotation.dart';
+
+import '../../core/app_export.dart';
 
 import '../../core/app_export.dart';
 import './widgets/pdf_annotation_toolbar.dart';
@@ -79,15 +82,74 @@ class _PdfReaderState extends State<PdfReader> {
   bool _useTextHighlight = false; // If true, use text-detection highlight; if false, use paint highlight
   bool _showZoomControls = true; // Show/hide zoom control bar
   
+  // Page indicator auto-fade
+  bool _showPageIndicator = true;
+  Timer? _pageIndicatorTimer;
+  int _pageIndicatorDuration = 3; // seconds, 0 = always visible
+  final SettingsService _settingsService = SettingsService();
+  
   // Selected annotation for showing comment
   String? _selectedAnnotationId; // Currently selected annotation for note viewing
   Offset? _annotationCommentPosition; // Position to show the annotation comment
 
-  Color _selectedAnnotationColor = const Color(0xFFFFEB3B); // Default yellow
+  Color _selectedAnnotationColor = Colors.blue; // Default from settings
+  
+  // Scroll direction from settings
+  Axis _scrollDirection = Axis.vertical;
   
   // Text detection for underline
   Map<int, PdfPageRawText?> _pageTextCache = {}; // Cache for page raw text data
   List<Rect> _detectedTextRects = []; // Detected text rectangles for current underline
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPageIndicatorSettings();
+    _setupAutoHideControls();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  Future<void> _loadPageIndicatorSettings() async {
+    await _settingsService.init();
+    final duration = await _settingsService.getPageNumberDuration();
+    final highlightColor = _settingsService.defaultHighlightColorAsColor;
+    final scrollDir = _settingsService.scrollDirection;
+    if (mounted) {
+      setState(() {
+        _pageIndicatorDuration = duration;
+        _selectedAnnotationColor = highlightColor;
+        _scrollDirection = scrollDir == 'horizontal' ? Axis.horizontal : Axis.vertical;
+      });
+    }
+  }
+
+  void _startPageIndicatorTimer() {
+    _pageIndicatorTimer?.cancel();
+    
+    // If duration is 0, always show
+    if (_pageIndicatorDuration == 0) {
+      setState(() => _showPageIndicator = true);
+      return;
+    }
+    
+    // Show indicator
+    setState(() => _showPageIndicator = true);
+    
+    // Start timer to hide
+    _pageIndicatorTimer = Timer(Duration(seconds: _pageIndicatorDuration), () {
+      if (mounted) {
+        setState(() => _showPageIndicator = false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageIndicatorTimer?.cancel();
+    _textSearcher?.dispose();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -238,13 +300,6 @@ class _PdfReaderState extends State<PdfReader> {
     }
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _setupAutoHideControls();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-  }
-
   /// Load annotations from service after document is loaded
   Future<void> _loadAnnotationsFromService() async {
     if (_document == null) return;
@@ -381,18 +436,46 @@ class _PdfReaderState extends State<PdfReader> {
       return;
     }
     
-    // Show saving dialog
+    // Show saving dialog with better styling
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        content: Row(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(color: AppTheme.accentColor),
-            SizedBox(width: 16),
-            Text('Saving annotations...', style: TextStyle(color: AppTheme.textPrimary)),
+            SizedBox(height: 16),
+            Container(
+              padding: EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.accentColor.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: CircularProgressIndicator(
+                color: AppTheme.accentColor,
+                strokeWidth: 3,
+              ),
+            ),
+            SizedBox(height: 24),
+            Text(
+              'Saving your work...',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Syncing annotations to cloud',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 14,
+              ),
+            ),
+            SizedBox(height: 16),
           ],
         ),
       ),
@@ -446,59 +529,110 @@ class _PdfReaderState extends State<PdfReader> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Column(
           children: [
-            Icon(Icons.bookmark_outline, color: AppTheme.accentColor),
-            SizedBox(width: 12),
-            Text('Save Reading Progress', style: TextStyle(color: AppTheme.textPrimary)),
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.accentColor.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.bookmark_outline, color: AppTheme.accentColor, size: 32),
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Save Reading Progress',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(
               'What page did you finish reading?',
               style: TextStyle(color: AppTheme.textSecondary),
+              textAlign: TextAlign.center,
             ),
-            SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              autofocus: true,
-              style: TextStyle(color: AppTheme.textPrimary, fontSize: 18),
-              decoration: InputDecoration(
-                hintText: 'Page number',
-                hintStyle: TextStyle(color: AppTheme.textSecondary),
-                filled: true,
-                fillColor: AppTheme.primaryDark,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+            SizedBox(height: 20),
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.primaryDark,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppTheme.accentColor.withValues(alpha: 0.3),
                 ),
-                suffixText: 'of $_totalPages',
-                suffixStyle: TextStyle(color: AppTheme.textSecondary),
+              ),
+              child: TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Page',
+                  hintStyle: TextStyle(color: AppTheme.textSecondary),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                ),
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'of $_totalPages pages',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 13,
               ),
             ),
           ],
         ),
+        actionsAlignment: MainAxisAlignment.center,
+        actionsPadding: EdgeInsets.fromLTRB(16, 0, 16, 16),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, null),
-            child: Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final page = int.tryParse(controller.text) ?? _currentPage;
-              final validPage = page.clamp(1, _totalPages > 0 ? _totalPages : page);
-              Navigator.pop(context, validPage);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.accentColor,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: Text('Save'),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context, null),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.3)),
+                    ),
+                  ),
+                  child: Text('Cancel', style: TextStyle(color: AppTheme.textSecondary)),
+                ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () {
+                    final page = int.tryParse(controller.text) ?? _currentPage;
+                    final validPage = page.clamp(1, _totalPages > 0 ? _totalPages : page);
+                    Navigator.pop(context, validPage);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accentColor,
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text('Save', style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -511,32 +645,79 @@ class _PdfReaderState extends State<PdfReader> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.surfaceColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.celebration_rounded, color: Colors.amber, size: 28),
-            SizedBox(width: 12),
-            Text('Congratulations! 🎉', style: TextStyle(color: AppTheme.textPrimary)),
+            SizedBox(height: 16),
+            Container(
+              padding: EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Text('🎉', style: TextStyle(fontSize: 48)),
+            ),
+            SizedBox(height: 24),
+            Text(
+              'Congratulations!',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'You\'ve reached the last page!',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 15,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Would you like to mark this book as finished?',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: AppTheme.textSecondary.withValues(alpha: 0.3)),
+                      ),
+                    ),
+                    child: Text('Not Yet', style: TextStyle(color: AppTheme.textSecondary)),
+                  ),
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.successColor,
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text('Finished! ✓', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
           ],
         ),
-        content: Text(
-          'You\'ve reached the last page! Would you like to mark this book as finished?',
-          style: TextStyle(color: AppTheme.textSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Not Yet', style: TextStyle(color: AppTheme.textSecondary)),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.successColor,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: Text('Mark as Finished'),
-          ),
-        ],
       ),
     );
   }
@@ -648,13 +829,6 @@ class _PdfReaderState extends State<PdfReader> {
         _showAnnotationToolbar = true;
       });
     }
-  }
-
-  @override
-  void dispose() {
-    _textSearcher?.dispose();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    super.dispose();
   }
 
   void _toggleControls() {
@@ -1974,28 +2148,38 @@ class _PdfReaderState extends State<PdfReader> {
           child: _buildSlideOutZoomControls(),
         ),
         
-        // Page indicator - always visible
+        // Page indicator - auto-fading
         Positioned(
           bottom: _showFloatingNavbar ? 9.h : 2.h,
           left: 0,
           right: 0,
           child: Center(
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryDark.withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: AppTheme.accentColor.withValues(alpha: 0.3),
-                  width: 1,
-                ),
-              ),
-              child: Text(
-                'Page $_currentPage of $_totalPages',
-                style: TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
+            child: AnimatedOpacity(
+              opacity: _showPageIndicator ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: GestureDetector(
+                onTap: () {
+                  // Tapping shows/resets the timer
+                  _startPageIndicatorTimer();
+                },
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryDark.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppTheme.accentColor.withValues(alpha: 0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    'Page $_currentPage of $_totalPages',
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -2635,6 +2819,26 @@ class _PdfReaderState extends State<PdfReader> {
         sourceName: _document?.title ?? 'document.pdf',
         controller: _pdfViewerController,
           params: PdfViewerParams(
+          layoutPages: _scrollDirection == Axis.horizontal
+              ? (pages, params) {
+                  // Horizontal layout - pages side by side
+                  final height = pages.fold(0.0, (prev, page) => prev > page.height ? prev : page.height) + params.margin * 2;
+                  final pageLayouts = <Rect>[];
+                  double x = params.margin;
+                  for (final page in pages) {
+                    pageLayouts.add(
+                      Rect.fromLTWH(
+                        x,
+                        (height - page.height) / 2, // center vertically
+                        page.width,
+                        page.height,
+                      ),
+                    );
+                    x += page.width + params.margin;
+                  }
+                  return PdfPageLayout(pageLayouts: pageLayouts, documentSize: Size(x, height));
+                }
+              : null, // null = default vertical layout
           panEnabled: _isPanMode || !_isToolActive, // Enable pan in pan mode or when no tool active
           scaleEnabled: _isPanMode || !_isToolActive, // Enable scale in pan mode or when no tool active
           textSelectionParams: PdfTextSelectionParams(
@@ -2699,6 +2903,7 @@ class _PdfReaderState extends State<PdfReader> {
             setState(() {
               _currentPage = pageNumber ?? 1;
             });
+            _startPageIndicatorTimer(); // Show and auto-fade page indicator
           },
           errorBannerBuilder: (context, error, stackTrace, documentRef) {
              print('❌ PDF Load Failed: $error');
@@ -2762,14 +2967,33 @@ class _PdfReaderState extends State<PdfReader> {
             },
           ),
         
-        // Render existing annotations - allow taps in pan mode for annotation selection
-        LayoutBuilder(
+        // Render existing annotations - pan mode uses IgnorePointer to allow PDF pan/zoom
+        // When not in pan mode, allow taps for annotation selection
+        _isPanMode 
+          ? IgnorePointer(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
+                  return CustomPaint(
+                    size: pageRect.size,
+                    painter: AnnotationPainter(
+                      annotations: pageAnnotations, 
+                      scale: 1.0, 
+                      page: page, 
+                      pageRect: pageRect,
+                      selectedAnnotationId: _selectedAnnotationId,
+                    ),
+                  );
+                },
+              ),
+            )
+          : LayoutBuilder(
           builder: (context, constraints) {
             final pageSize = Size(constraints.maxWidth, constraints.maxHeight);
             return GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTapUp: _isToolActive ? null : (details) {
-                // Allow taps for annotation selection (even in pan mode)
+                // Allow taps for annotation selection
                   
                   final tapPos = details.localPosition;
                   final normalizedTapPos = PdfAnnotation.toNormalizedPoint(tapPos, pageSize);

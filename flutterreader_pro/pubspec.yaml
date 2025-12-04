@@ -1,5 +1,5 @@
 name: flutterreader_pro
-description: A new Flutter project.
+description: BK-RDR - PDF Reader App for Android and Web
 publish_to: none
 version: 1.0.0+1
 
@@ -7,39 +7,45 @@ environment:
   sdk: ^3.6.0
 
 dependencies:
-  flutter:       # 🚨 CRITICAL: Required for every Flutter project - DO NOT REMOVE
-    sdk: flutter # 🚨 CRITICAL: Required for every Flutter project - DO NOT REMOVE
+  flutter:
+    sdk: flutter
   
-  # 🚨 CRITICAL: Core UI and responsive design - DO NOT REMOVE OR MODIFY
-  sizer: ^2.0.15              # Required for responsive design system
-  flutter_svg: ^2.0.9        # Required for SVG icon support
-  google_fonts: ^6.1.0       # Required for typography (replaces local fonts)
-  shared_preferences: ^2.2.2 # Required for local data storage
-  web: ^1.1.1
+  # Core UI and responsive design
+  sizer: ^2.0.15
+  flutter_svg: ^2.0.9
+  google_fonts: ^6.1.0
   
-  # Feature dependencies - safe to modify
-  cached_network_image: ^3.3.1
-  connectivity_plus: ^6.1.4
+  # Local storage
+  shared_preferences: ^2.2.2
+  
+  # Networking
   dio: ^5.4.0
-  fluttertoast: ^8.2.4
-  fl_chart: ^0.65.0
+  
+  # Date formatting
+  intl: ^0.20.2
+  
+  # File handling
   file_picker: ^8.0.0
-  sqflite: ^2.3.0
-
   path_provider: ^2.1.0
-  universal_html: ^2.2.4
-  syncfusion_flutter_pdfviewer: ^31.2.15
+  
+  # PDF viewing
   pdfrx: ^2.2.16
+  
+  # Backend
   supabase_flutter: ^2.10.3
-  device_info_plus: ^12.3.0
+  
+  # Platform utilities
+  universal_html: ^2.2.4
   universal_io: ^2.3.1
-  http: ^1.2.0
+  
+  # Image caching
+  cached_network_image: ^3.3.1
 
 dev_dependencies:
-  flutter_test:    # 🚨 CRITICAL: Required for Flutter project testing - DO NOT REMOVE
-    sdk: flutter   # 🚨 CRITICAL: Required for Flutter project testing - DO NOT REMOVE
-  flutter_lints: ^5.0.0 # 🚨 CRITICAL: Required for code quality - DO NOT REMOVE
-  flutter_launcher_icons: ^0.13.1 # For generating app icons
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true # 🚨 CRITICAL: Required for Material icon font - DO NOT REMOVE
