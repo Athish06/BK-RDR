@@ -328,8 +328,16 @@ class _PdfReaderState extends State<PdfReader> {
   PdfAnnotation _convertToPdfAnnotation(AnnotationData data) {
     // Parse points from position data
     final points = <Offset>[];
+    
+    // Check position['points'] first
     if (data.position['points'] != null) {
       for (final p in data.position['points'] as List) {
+        points.add(Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble()));
+      }
+    } 
+    // Fallback to strokePoints for drawings if points is empty
+    else if (data.strokePoints != null && data.strokePoints!.isNotEmpty) {
+      for (final p in data.strokePoints!) {
         points.add(Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble()));
       }
     }
@@ -383,9 +391,29 @@ class _PdfReaderState extends State<PdfReader> {
     }
   }
 
-  /// Convert Color to hex string
+  /// Convert Color to hex string (preserves alpha)
   String _colorToHex(Color color) {
-    return '#${color.value.toRadixString(16).substring(2).toUpperCase()}';
+    return '#${color.value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+  }
+
+  /// Save standalone note as annotation
+  Future<void> _saveStandaloneNote(String note) async {
+    if (_document == null) return;
+    
+    await _annotationService.addAnnotation(
+      documentId: _document!.id,
+      documentTitle: _document!.title,
+      pageNumber: _currentPage,
+      type: 'note',
+      content: note,
+      color: '#FFFF00', // Default note color
+      position: {'points': []}, // No points for standalone note
+      strokeWidth: 0,
+    );
+    
+    setState(() {
+      _hasUnsavedAnnotations = true;
+    });
   }
 
   /// Save annotation to local storage via service
@@ -394,6 +422,12 @@ class _PdfReaderState extends State<PdfReader> {
     
     // Convert points to storable format
     final pointsList = annotation.points.map((p) => {'dx': p.dx, 'dy': p.dy}).toList();
+    
+    // For drawings, also save to strokePoints
+    List<Map<String, dynamic>>? strokePoints;
+    if (annotation.type == AnnotationType.drawing) {
+      strokePoints = pointsList;
+    }
     
     await _annotationService.addAnnotation(
       documentId: _document!.id,
@@ -404,6 +438,7 @@ class _PdfReaderState extends State<PdfReader> {
       color: _colorToHex(annotation.color),
       position: {'points': pointsList},
       strokeWidth: 2.0,
+      strokePoints: strokePoints,
     );
     
     setState(() {
@@ -1230,7 +1265,12 @@ class _PdfReaderState extends State<PdfReader> {
                   linkedNote: note,
                 );
               });
+              // Save updated annotation to local/Supabase
+              _saveAnnotationToLocal(_annotations[index]);
             }
+          } else {
+            // Save standalone note as an annotation of type 'note'
+            _saveStandaloneNote(note);
           }
           
           print('📝 Note saved: $note${annotationId != null ? ' (linked to annotation $annotationId)' : ''}');
@@ -1257,6 +1297,8 @@ class _PdfReaderState extends State<PdfReader> {
                 linkedNote: note,
               );
             });
+            // Save updated annotation to local/Supabase
+            _saveAnnotationToLocal(_annotations[index]);
             
             // Also add to quick notes list if not already there
             final existingNoteIndex = _quickNotes.indexWhere(
@@ -2904,6 +2946,11 @@ class _PdfReaderState extends State<PdfReader> {
               _currentPage = pageNumber ?? 1;
             });
             _startPageIndicatorTimer(); // Show and auto-fade page indicator
+            
+            // Update reading progress
+            if (pageNumber != null) {
+              _updateReadingProgress(pageNumber);
+            }
           },
           errorBannerBuilder: (context, error, stackTrace, documentRef) {
              print('❌ PDF Load Failed: $error');

@@ -57,13 +57,15 @@ class _HomeDashboardState extends State<HomeDashboard> {
     HapticFeedback.lightImpact();
   }
 
-  void _handleBookTap(DocumentModel book) {
+  void _handleBookTap(DocumentModel book) async {
     HapticFeedback.lightImpact();
-    Navigator.pushNamed(
+    await Navigator.pushNamed(
       context, 
       '/pdf-reader',
       arguments: book,
     );
+    // Refresh data when returning from reader
+    _loadData();
   }
 
   @override

@@ -3,13 +3,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Service for managing app settings with local cache and Supabase sync
-class SettingsService {
+class SettingsService extends ChangeNotifier {
   static SettingsService? _instance;
   SettingsService._internal();
   factory SettingsService() => _instance ??= SettingsService._internal();
 
   SharedPreferences? _prefs;
-  final SupabaseClient _supabase = Supabase.instance.client;
+  SupabaseClient get _supabase => Supabase.instance.client;
   
   // Cached settings for instant access
   Map<String, dynamic> _cachedSettings = {};
@@ -166,6 +166,7 @@ class SettingsService {
         };
         // Update local cache
         await _saveToLocalCache();
+        notifyListeners(); // Notify after sync
         print('✅ Settings synced from Supabase');
       } else {
         // Create new settings record in Supabase
@@ -222,6 +223,7 @@ class SettingsService {
   /// Update a setting (saves locally and syncs to Supabase)
   Future<void> setSetting(String key, dynamic value) async {
     _cachedSettings[key] = value;
+    notifyListeners(); // Notify listeners of change
     await _saveToLocalCache();
     await _saveToSupabase();
   }
@@ -265,6 +267,7 @@ class SettingsService {
 
   Future<void> resetAllSettings() async {
     _cachedSettings = Map.from(defaultSettings);
+    notifyListeners();
     await _saveToLocalCache();
     await _saveToSupabase();
   }
