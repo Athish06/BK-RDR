@@ -3,11 +3,16 @@ name: Build Android APK
 on:
   push:
     branches: [ "master", "main" ]
-  workflow_dispatch: # Allows you to manually trigger the build
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # 👇 IMPORTANT: This tells GitHub to run commands inside your project folder
+    defaults:
+      run:
+        working-directory: ./flutterreader_pro
 
     steps:
       - uses: actions/checkout@v3
@@ -21,7 +26,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0' # Adjust if your project needs a specific version
+          flutter-version: '3.19.0'
           channel: 'stable'
 
       - name: Get Dependencies
@@ -34,4 +39,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          # 👇 IMPORTANT: We must include the folder name here too
+          path: flutterreader_pro/build/app/outputs/flutter-apk/app-release.apk
