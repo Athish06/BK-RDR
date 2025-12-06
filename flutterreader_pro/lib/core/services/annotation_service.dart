@@ -333,16 +333,11 @@ class AnnotationService {
     
     try {
       for (final annotation in newAnnotations) {
-        // Map textHighlight to highlight for Supabase constraint compatibility
-        String dbType = annotation.type;
-        if (dbType == 'textHighlight') {
-          dbType = 'highlight';
-        }
-        
+        // Save the exact annotation type to preserve paint vs text highlight distinction
         final annotationData = {
           'document_id': annotation.documentId,
           'page_number': annotation.pageNumber,
-          'type': dbType,
+          'type': annotation.type,
           'content': annotation.content,
           'color': annotation.color,
           'position': annotation.position,

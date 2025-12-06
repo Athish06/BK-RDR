@@ -3138,6 +3138,15 @@ class _PdfReaderState extends State<PdfReader> {
                   },
                   onPanEnd: (details) {
                     print('🖊️ Draw end');
+                    
+                    // Save the drawing annotation
+                    if (_currentDrawingAnnotationId != null) {
+                      final index = _annotations.indexWhere((a) => a.id == _currentDrawingAnnotationId);
+                      if (index != -1 && _annotations[index].points.isNotEmpty) {
+                        _saveAnnotationToLocal(_annotations[index]);
+                      }
+                    }
+                    
                     setState(() {
                       _isDrawing = false;
                       _currentDrawingAnnotationId = null;
@@ -3196,6 +3205,15 @@ class _PdfReaderState extends State<PdfReader> {
                   },
                   onPanEnd: (details) {
                     print('📝 Highlight end');
+                    
+                    // Save the highlight annotation
+                    if (_currentAnnotationId != null) {
+                      final index = _annotations.indexWhere((a) => a.id == _currentAnnotationId);
+                      if (index != -1 && _annotations[index].points.isNotEmpty) {
+                        _saveAnnotationToLocal(_annotations[index]);
+                      }
+                    }
+                    
                     setState(() {
                       _isAnnotating = false;
                       _currentAnnotationId = null;
@@ -3451,15 +3469,14 @@ class AnnotationPainter extends CustomPainter {
           _drawSelectionIndicator(canvas, scaledPoints);
         }
       } else if (annotation.type == AnnotationType.highlight && scaledPoints.isNotEmpty) {
-        // Paint-style highlight - draw thick strokes following drag path
-        // Scale stroke width proportionally to page size
-        final strokeWidth = 20.0 * (size.height / (annotation.originalPageSize?.height ?? size.height));
+        // Paint-style highlight - draw semi-transparent highlight with smoother appearance
         final highlightPaint = Paint()
-          ..color = annotation.color
-          ..strokeWidth = strokeWidth.clamp(10.0, 40.0) // Keep within reasonable bounds
+          ..color = annotation.color.withValues(alpha: 0.35) // More transparent for natural look
+          ..strokeWidth = 16.0 // Fixed width for consistency
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke;
+          ..style = PaintingStyle.stroke
+          ..blendMode = BlendMode.multiply; // Better blending with text
         
         if (scaledPoints.length >= 2) {
           final path = Path();
@@ -3475,13 +3492,14 @@ class AnnotationPainter extends CustomPainter {
           }
         } else if (scaledPoints.length == 1) {
           // Single point - draw a circle
-          canvas.drawCircle(scaledPoints.first, 10, highlightPaint..style = PaintingStyle.fill);
+          canvas.drawCircle(scaledPoints.first, 8, highlightPaint..style = PaintingStyle.fill);
         }
       } else if (annotation.type == AnnotationType.textHighlight && scaledPoints.isNotEmpty) {
-        // Text-detected highlight - draw filled rectangles behind text
+        // Text-detected highlight - draw semi-transparent filled rectangles behind text
         final textHighlightPaint = Paint()
-          ..color = annotation.color
-          ..style = PaintingStyle.fill;
+          ..color = annotation.color.withValues(alpha: 0.3) // 30% opacity for readability
+          ..style = PaintingStyle.fill
+          ..blendMode = BlendMode.multiply; // Better blending with text
         
         // Points are stored as groups of 4: [topLeft, topRight, bottomRight, bottomLeft] for each text rect
         if (scaledPoints.length >= 4) {

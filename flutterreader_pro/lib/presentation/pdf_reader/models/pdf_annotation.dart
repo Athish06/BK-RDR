@@ -75,12 +75,8 @@ class PdfAnnotation {
   
   // Get scaled points for current page size
   List<Offset> getScaledPoints(Size currentPageSize) {
-    if (originalPageSize == null) {
-      // No original size stored, return points as-is (legacy behavior)
-      return points;
-    }
-    
-    // Scale points from original page size to current page size
+    // Points are ALWAYS stored as normalized coordinates (0.0 to 1.0 range)
+    // Scale them to the current page size to get actual pixel coordinates
     return points.map((normalizedPoint) {
       return Offset(
         normalizedPoint.dx * currentPageSize.width,

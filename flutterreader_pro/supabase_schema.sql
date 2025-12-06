@@ -145,11 +145,14 @@ ALTER TABLE public.folders DROP COLUMN IF EXISTS storage_type;
 -- +------------------+------------------------+----------------------------------+
 
 -- =============================================================================
--- NOTE: The app maps 'textHighlight' to 'highlight' for Supabase compatibility
--- If you want to add textHighlight as a valid type, run:
--- ALTER TABLE annotations DROP CONSTRAINT annotations_type_check;
--- ALTER TABLE annotations ADD CONSTRAINT annotations_type_check 
---   CHECK (type IN ('highlight', 'underline', 'drawing', 'note', 'textHighlight'));
+-- ANNOTATION TYPE CONSTRAINT UPDATE
+-- Run this to allow both paint highlights and text highlights:
+-- =============================================================================
+
+ALTER TABLE annotations DROP CONSTRAINT IF EXISTS annotations_type_check;
+ALTER TABLE annotations ADD CONSTRAINT annotations_type_check 
+  CHECK (type IN ('highlight', 'underline', 'drawing', 'note', 'text', 'textHighlight', 'eraser'));
+
 -- =============================================================================
 
 -- =============================================================================
