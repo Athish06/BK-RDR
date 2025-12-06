@@ -9,6 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # 👇 IMPORTANT: Tells GitHub to look inside your sub-folder
     defaults:
       run:
         working-directory: ./flutterreader_pro
@@ -22,20 +23,23 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # 👇 IMPORTANT: Uses Master channel for Dart 3.8+ (Required by pdfrx)
       - name: Set up Flutter (Master Channel)
         uses: subosito/flutter-action@v2
         with:
-          channel: 'master' # 👈 Forces the latest bleeding-edge version
+          channel: 'master'
           cache: true
 
       - name: Get Dependencies
         run: flutter pub get
 
+      # 👇 IMPORTANT: Fixes the "IconData" error by disabling icon optimization
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
+          # Path includes the project folder
           path: flutterreader_pro/build/app/outputs/flutter-apk/app-release.apk
