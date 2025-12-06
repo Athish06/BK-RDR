@@ -30,7 +30,372 @@ class AppTheme {
   static const Color surfaceLight = Color(0xFFF8F9FA);
   static const Color textLight = Color(0xFF1A1A1A);
 
-  /// Dark theme - Primary theme optimized for reading applications
+  /// Helper to create Color from hex string
+  static Color _colorFromHex(String hexColor) {
+    hexColor = hexColor.replaceAll('#', '');
+    if (hexColor.length == 6) hexColor = 'FF$hexColor';
+    return Color(int.parse(hexColor, radix: 16));
+  }
+
+  /// Get dark theme with dynamic accent color
+  static ThemeData getDarkTheme(String accentColorHex) {
+    final Color dynamicAccent = _colorFromHex(accentColorHex);
+    
+    return ThemeData(
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme(
+        brightness: Brightness.dark,
+        primary: dynamicAccent,
+        onPrimary: textPrimary,
+        primaryContainer: dynamicAccent.withAlpha(51),
+        onPrimaryContainer: textPrimary,
+        secondary: secondaryDark,
+        onSecondary: textPrimary,
+        secondaryContainer: secondaryDark.withAlpha(77),
+        onSecondaryContainer: textPrimary,
+        tertiary: warningColor,
+        onTertiary: primaryDark,
+        tertiaryContainer: warningColor.withAlpha(51),
+        onTertiaryContainer: textPrimary,
+        error: errorColor,
+        onError: textPrimary,
+        surface: surfaceColor,
+        onSurface: textPrimary,
+        onSurfaceVariant: textSecondary,
+        outline: textSecondary.withAlpha(31),
+        outlineVariant: textSecondary.withAlpha(20),
+        shadow: Colors.black.withAlpha(20),
+        scrim: Colors.black.withAlpha(128),
+        inverseSurface: textPrimary,
+        onInverseSurface: primaryDark,
+        inversePrimary: dynamicAccent,
+      ),
+      scaffoldBackgroundColor: primaryDark,
+      cardColor: surfaceColor,
+      dividerColor: textSecondary.withAlpha(31),
+
+      appBarTheme: AppBarTheme(
+        backgroundColor: primaryDark,
+        foregroundColor: textPrimary,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: GoogleFonts.inter(
+          fontSize: 18,
+          fontWeight: FontWeight.w500,
+          color: textPrimary,
+          letterSpacing: 0.15,
+        ),
+        iconTheme: const IconThemeData(
+          color: textPrimary,
+          size: 24,
+        ),
+      ),
+
+      cardTheme: CardThemeData(
+        color: surfaceColor,
+        elevation: 2.0,
+        shadowColor: Colors.black.withAlpha(20),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12.0),
+        ),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
+
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: surfaceColor,
+        selectedItemColor: dynamicAccent,
+        unselectedItemColor: textSecondary,
+        type: BottomNavigationBarType.fixed,
+        elevation: 8,
+        selectedLabelStyle: GoogleFonts.inter(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+        ),
+        unselectedLabelStyle: GoogleFonts.inter(
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+        ),
+      ),
+
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: dynamicAccent,
+        foregroundColor: textPrimary,
+        elevation: 6,
+        focusElevation: 8,
+        hoverElevation: 8,
+        highlightElevation: 12,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          foregroundColor: textPrimary,
+          backgroundColor: dynamicAccent,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          minimumSize: const Size(120, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12.0),
+          ),
+          elevation: 2,
+          shadowColor: Colors.black.withAlpha(20),
+          textStyle: GoogleFonts.inter(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.15,
+          ),
+        ),
+      ),
+
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: dynamicAccent,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          minimumSize: const Size(120, 48),
+          side: BorderSide(color: dynamicAccent.withAlpha(128)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12.0),
+          ),
+          textStyle: GoogleFonts.inter(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.15,
+          ),
+        ),
+      ),
+
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: dynamicAccent,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          minimumSize: const Size(88, 36),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8.0),
+          ),
+          textStyle: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.25,
+          ),
+        ),
+      ),
+
+      textTheme: _buildDarkTextTheme(),
+
+      inputDecorationTheme: InputDecorationTheme(
+        fillColor: surfaceColor,
+        filled: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: BorderSide(
+            color: textSecondary.withAlpha(31),
+            width: 1,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: BorderSide(
+            color: dynamicAccent,
+            width: 2,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: const BorderSide(
+            color: errorColor,
+            width: 1,
+          ),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: const BorderSide(
+            color: errorColor,
+            width: 2,
+          ),
+        ),
+        labelStyle: GoogleFonts.inter(
+          color: textSecondary,
+          fontSize: 16,
+          fontWeight: FontWeight.w400,
+        ),
+        hintStyle: GoogleFonts.inter(
+          color: textSecondary.withAlpha(153),
+          fontSize: 16,
+          fontWeight: FontWeight.w400,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return dynamicAccent;
+          }
+          return textSecondary;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return dynamicAccent.withAlpha(77);
+          }
+          return textSecondary.withAlpha(51);
+        }),
+      ),
+
+      checkboxTheme: CheckboxThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return dynamicAccent;
+          }
+          return Colors.transparent;
+        }),
+        checkColor: WidgetStateProperty.all(textPrimary),
+        side: BorderSide(color: textSecondary.withAlpha(128), width: 2),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return dynamicAccent;
+          }
+          return textSecondary;
+        }),
+      ),
+
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: dynamicAccent,
+        linearTrackColor: const Color(0xFF2D2D30),
+      ),
+
+      sliderTheme: SliderThemeData(
+        activeTrackColor: dynamicAccent,
+        thumbColor: dynamicAccent,
+        overlayColor: dynamicAccent.withAlpha(51),
+        inactiveTrackColor: textSecondary.withAlpha(77),
+        trackHeight: 4,
+        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+      ),
+
+      tabBarTheme: TabBarThemeData(
+        labelColor: textPrimary,
+        unselectedLabelColor: textSecondary,
+        indicatorColor: dynamicAccent,
+        indicatorSize: TabBarIndicatorSize.label,
+        labelStyle: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.25,
+        ),
+        unselectedLabelStyle: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          letterSpacing: 0.25,
+        ),
+      ),
+
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: surfaceColor.withAlpha(242),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(20),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        textStyle: GoogleFonts.inter(
+          color: textPrimary,
+          fontSize: 12,
+          fontWeight: FontWeight.w400,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      ),
+
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: surfaceColor,
+        contentTextStyle: GoogleFonts.inter(
+          color: textPrimary,
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+        ),
+        actionTextColor: dynamicAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12.0),
+        ),
+        elevation: 6,
+      ),
+
+      listTileTheme: ListTileThemeData(
+        tileColor: Colors.transparent,
+        selectedTileColor: dynamicAccent.withAlpha(26),
+        iconColor: textSecondary,
+        textColor: textPrimary,
+        titleTextStyle: GoogleFonts.inter(
+          fontSize: 16,
+          fontWeight: FontWeight.w400,
+          color: textPrimary,
+        ),
+        subtitleTextStyle: GoogleFonts.inter(
+          fontSize: 14,
+          fontWeight: FontWeight.w400,
+          color: textSecondary,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
+      dialogTheme: DialogThemeData(backgroundColor: surfaceColor),
+    );
+  }
+
+  /// Get light theme with dynamic accent color
+  static ThemeData getLightTheme(String accentColorHex) {
+    final Color dynamicAccent = _colorFromHex(accentColorHex);
+    
+    return ThemeData(
+      brightness: Brightness.light,
+      colorScheme: ColorScheme(
+        brightness: Brightness.light,
+        primary: dynamicAccent,
+        onPrimary: textPrimary,
+        primaryContainer: dynamicAccent.withAlpha(26),
+        onPrimaryContainer: dynamicAccent,
+        secondary: const Color(0xFF6B7280),
+        onSecondary: textPrimary,
+        secondaryContainer: const Color(0xFFF3F4F6),
+        onSecondaryContainer: const Color(0xFF374151),
+        tertiary: warningColor,
+        onTertiary: textPrimary,
+        tertiaryContainer: warningColor.withAlpha(26),
+        onTertiaryContainer: warningColor,
+        error: errorColor,
+        onError: textPrimary,
+        surface: surfaceLight,
+        onSurface: textLight,
+        onSurfaceVariant: const Color(0xFF6B7280),
+        outline: const Color(0xFFD1D5DB),
+        outlineVariant: const Color(0xFFE5E7EB),
+        shadow: Colors.black.withAlpha(26),
+        scrim: Colors.black.withAlpha(128),
+        inverseSurface: textLight,
+        onInverseSurface: backgroundLight,
+        inversePrimary: dynamicAccent,
+      ),
+      scaffoldBackgroundColor: backgroundLight,
+      textTheme: _buildLightTextTheme(),
+    );
+  }
+
+  /// Dark theme - Primary theme optimized for reading applications (LEGACY - use getDarkTheme instead)
   static ThemeData darkTheme = ThemeData(
     brightness: Brightness.dark,
     colorScheme: ColorScheme(

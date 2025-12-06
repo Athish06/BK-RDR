@@ -155,15 +155,12 @@ class _MyAppState extends State<MyApp> {
         animation: SettingsService(),
         builder: (context, child) {
           final settings = SettingsService();
-          // Create theme data based on settings
-          final themeData = settings.darkMode ? AppTheme.darkTheme : AppTheme.lightTheme;
-          // Apply accent color override if needed (simplified for now)
           
           return MaterialApp(
             navigatorKey: _navigatorKey,
             title: 'flutterreader_pro',
-            theme: AppTheme.lightTheme,
-            darkTheme: AppTheme.darkTheme,
+            theme: AppTheme.getLightTheme(settings.accentColor),
+            darkTheme: AppTheme.getDarkTheme(settings.accentColor),
             themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
             // 🚨 CRITICAL: NEVER REMOVE OR MODIFY
             builder: (context, child) {

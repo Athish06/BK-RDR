@@ -2962,11 +2962,18 @@ class _PdfReaderState extends State<PdfReader> {
       );
 
       if (_isDarkMode) {
+        // High-quality dark mode with color matrix filter
+        // Creates soft dark grey background (easier on eyes than pure black)
+        // Preserves annotation colors better than BlendMode.difference
+        const ColorFilter darkModeFilter = ColorFilter.matrix([
+          -0.8, 0, 0, 0, 255, // Red channel - inverted with grey background
+          0, -0.8, 0, 0, 255, // Green channel - inverted with grey background
+          0, 0, -0.8, 0, 255, // Blue channel - inverted with grey background
+          0, 0, 0, 1, 0,      // Alpha channel - unchanged
+        ]);
+
         viewer = ColorFiltered(
-          colorFilter: const ColorFilter.mode(
-            Colors.white,
-            BlendMode.difference,
-          ),
+          colorFilter: darkModeFilter,
           child: viewer,
         );
       }
