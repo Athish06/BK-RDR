@@ -9,7 +9,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # 👇 IMPORTANT: This tells GitHub to run commands inside your project folder
     defaults:
       run:
         working-directory: ./flutterreader_pro
@@ -23,11 +22,11 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Set up Flutter (Master Channel)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.0' # 👈 CHANGED from 3.19.0 to 3.29.0
-          channel: 'master'
+          channel: 'master' # 👈 Forces the latest bleeding-edge version
+          cache: true
 
       - name: Get Dependencies
         run: flutter pub get
@@ -39,5 +38,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          # 👇 IMPORTANT: We must include the folder name here too
           path: flutterreader_pro/build/app/outputs/flutter-apk/app-release.apk
