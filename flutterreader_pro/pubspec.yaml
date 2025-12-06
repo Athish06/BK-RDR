@@ -29,7 +29,7 @@ dependencies:
   path_provider: ^2.1.0
   
   # PDF viewing
- pdfrx: ^2.0.0
+  pdfrx: ^2.0.0
   # Backend
   supabase_flutter: ^2.10.3
   
