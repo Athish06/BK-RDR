@@ -1756,10 +1756,22 @@ class _PdfLibraryState extends State<PdfLibrary> with SingleTickerProviderStateM
             onPressed: () async {
               Navigator.pop(context);
               _showLoadingDialog('Deleting...');
-              await _documentService.deleteDocument(doc.id);
-              Navigator.pop(context);
-              await _loadData();
-              _showSuccessSnackBar('Document deleted');
+              
+              try {
+                await _documentService.deleteDocument(doc.id);
+                
+                if (mounted) {
+                  Navigator.pop(context); // Close loading dialog
+                  await _loadData();
+                  _showSuccessSnackBar('Document deleted');
+                }
+              } catch (e) {
+                // Handle error and close loading dialog to prevent app freeze
+                if (mounted) {
+                  Navigator.pop(context); 
+                  _showErrorSnackBar('Failed to delete: $e');
+                }
+              }
             },
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),

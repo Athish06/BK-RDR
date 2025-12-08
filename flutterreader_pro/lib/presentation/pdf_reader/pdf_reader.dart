@@ -1562,19 +1562,30 @@ class _PdfReaderState extends State<PdfReader> {
     // Normalize eraser radius relative to page size (use average of width/height)
     final normalizedRadius = 20.0 / ((pageSize.width + pageSize.height) / 2);
     
-    setState(() {
-      _annotations.removeWhere((annotation) {
-        if (annotation.pageNumber != pageNumber) return false;
-        
-        // Check if any normalized point of the annotation is within eraser radius
-        for (final p in annotation.points) {
-          if ((p - normalizedPoint).distance < normalizedRadius) {
-            return true;
-          }
+    // Collect annotations to remove
+    final toRemove = _annotations.where((annotation) {
+      if (annotation.pageNumber != pageNumber) return false;
+      
+      // Check if any normalized point of the annotation is within eraser radius
+      for (final p in annotation.points) {
+        if ((p - normalizedPoint).distance < normalizedRadius) {
+          return true;
         }
-        return false;
+      }
+      return false;
+    }).toList();
+    
+    // Remove from UI and database
+    if (toRemove.isNotEmpty) {
+      setState(() {
+        for (final annotation in toRemove) {
+          _annotations.remove(annotation);
+          // Delete from database/storage
+          _annotationService.deleteAnnotation(annotation.id);
+        }
       });
-    });
+      HapticFeedback.lightImpact();
+    }
   }
 
   void _handleZoomChange(double zoom) {
@@ -2660,6 +2671,11 @@ class _PdfReaderState extends State<PdfReader> {
     required VoidCallback onTap,
     bool isActive = false,
   }) {
+    // Ensure icons are visible in dark mode by using white color
+    final iconColor = isActive 
+        ? AppTheme.accentColor 
+        : (_isDarkMode ? Colors.white : AppTheme.textPrimary);
+    
     return GestureDetector(
       onTap: () {
         onTap();
@@ -2675,7 +2691,7 @@ class _PdfReaderState extends State<PdfReader> {
         ),
         child: CustomIconWidget(
           iconName: icon,
-          color: isActive ? AppTheme.accentColor : AppTheme.textPrimary,
+          color: iconColor,
           size: 18,
         ),
       ),
